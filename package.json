@@ -1,0 +1,15 @@
+{
+  "name": "boblox-server",
+  "version": "0.2.0",
+  "description": "Boblox account server: accounts, server-side BobCoins, purchases, downloads website",
+  "main": "boblox-platform-server.js",
+  "scripts": {
+    "start": "node boblox-platform-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.0"
+  }
+}

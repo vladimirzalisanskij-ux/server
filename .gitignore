@@ -1,0 +1,10 @@
+# Never commit the database, backups or logs - they contain player data.
+boblox-platform-db.json
+boblox-db.json
+backups/
+*.log
+node_modules/
+
+# Game builds are uploaded via the dashboard, not git (too big).
+public/downloads/*.zip
+public/downloads/*.apk

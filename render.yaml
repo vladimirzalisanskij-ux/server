@@ -1,0 +1,15 @@
+## Render.com blueprint: deploy the Boblox server in one click.
+## In Render: New + -> Blueprint -> point at your GitHub repo with this folder.
+services:
+  - type: web
+    name: boblox-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node boblox-platform-server.js
+    envVars:
+      # Your in-game username that gets the Owner role.
+      # Set the real value in the Render dashboard (Environment tab),
+      # NEVER commit secrets to git.
+      - key: BOBLOX_OWNER
+        sync: false

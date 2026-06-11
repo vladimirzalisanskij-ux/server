@@ -1,0 +1,48 @@
+BOBLOX - CHEKLIST PUBLICHNOGO RELIZA
+====================================
+
+UZHE SDELANO AVTOMATICHESKI (nichego delat' ne nado):
+[x] Paroli: scrypt (s2$...) + timing-safe sravnenie, starye akkaunty
+    migriruyutsya sami pri sleduyushchem logine
+[x] Avtobekapy bazy: papka Server/backups, kazhdye 6 chasov, 10 poslednikh
+[x] Rate-limity: login, promo, report, admin, chat
+[x] RBAC admin (owner/admin/moderator), audit log, session TTL 12h
+[x] render.yaml + .gitignore dlya bezopasnogo deploya
+
+SHAG 1 - VYLOZHIT' SERVER V INTERNET (Render, besplatno, ~15 minut):
+1. Sozday akkaunt na github.com i render.com
+2. Sozday GitHub-repozitoriy, zagruzi tuda papku Server
+   (baza i bekapy NE popadut - ikh blokiruet .gitignore)
+3. Na Render: New + -> Blueprint -> vyberi svoy repozitoriy
+   (render.yaml uzhe vse nastroil)
+4. V Render dashboard -> Environment -> dobav' peremennuyu:
+      BOBLOX_OWNER = tvoy_nik_v_igre
+5. Poluchish adres vida https://boblox-server.onrender.com
+6. V igre na ekrane vhoda vvedi etot adres (s https!)
+7. POSLE etogo v Unity: Project Settings -> Player ->
+   Allow downloads over HTTP -> "Not allowed" (i udali
+   BobloxHttpSettingsGuard.cs iz EditorTools)
+
+SHAG 2 - CLOUDFLARE (opcional'no, besplatno):
+1. Kupi domen (~$10/god) i dobav' ego v Cloudflare
+2. CNAME zapis' -> tvoy onrender.com adres, oranzhevoe oblako VKL
+3. SSL/TLS -> Full (strict); Always Use HTTPS -> ON
+4. Security -> WAF -> vkl. Managed Rules; Bot Fight Mode -> ON
+5. Security -> Rate limiting rules:
+      /api/login        5 zaprosov / minutu s IP
+      /api/promo/redeem 10 zaprosov / minutu s IP
+
+SHAG 3 - REAL'NYE DEN'GI (kogda budesh gotov):
+1. Eto trebuet: 18+ ili roditel', nalogovyy status, akkaunt
+   Stripe/YooKassa - BEZ etogo prodavat' nel'zya
+2. V boblox-platform-server.js zameni testovuyu /buy stranitsu:
+   gemy nachislyat' TOL'KO iz webhook platezhki (Stripe checkout ->
+   webhook s podpis'yu -> user.gems += paket)
+3. Sekretnye klyuchi platezhki - tol'ko v Environment Variables Render
+
+SHAG 4 - PERED ANONSOM:
+[ ] Schitat' rezul'taty matchey na servere (seychas /api/grant s capom)
+[ ] Perenesti bazu na SQLite/Postgres esli igrokov > ~500
+[ ] Politika konfidencial'nosti (igra dlya detey!)
+[ ] Moderatsiya publikuemykh mirov i nikov
+[ ] Naznach' 1-2 moderatorov cherez Admin Panel (setRole)
