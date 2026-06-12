@@ -114,6 +114,26 @@ function filterChat(raw) {
   return text;
 }
 
+// Active matches (in-memory): matchId -> {user, gameId, startedAt, finished}.
+// Reward amounts and minimum plausible durations live ONLY here.
+const matches = new Map();
+const matchRewardStamps = new Map(); // "user|game" -> [timestamps of rewarded finishes]
+
+const MATCH_REWARDS = {
+  obby:        { win: 10, lose: 1, minWinSeconds: 20, minLoseSeconds: 5 },
+  hideandseek: { win: 8,  lose: 1, minWinSeconds: 50, minLoseSeconds: 5 },
+  pvp:         { win: 6,  lose: 1, minWinSeconds: 10, minLoseSeconds: 5 },
+  generic:     { win: 5,  lose: 1, minWinSeconds: 15, minLoseSeconds: 5 },
+};
+
+function cleanupMatches() {
+  const TTL = 2 * 60 * 60 * 1000;
+  const now = Date.now();
+  for (const [id, match] of matches) {
+    if (now - match.startedAt > TTL) matches.delete(id);
+  }
+}
+
 migrateV03();
 
 function loadDb() {
@@ -392,9 +412,10 @@ async function handle(req, res) {
     const user = userByToken(body.token);
     if (!user) return send(res, 401, { ok: false, error: "Invalid session." });
 
-    // v0.3 anti-farm: tight cap per grant + per-reason cooldown.
-    // (Full server-authoritative match validation is future work.)
-    const amount = Math.min(20, Math.max(0, Math.floor(Number(body.amount || 0))));
+    // v0.3.1: match rewards now go through /api/match/finish (validated).
+    // This endpoint remains only for tiny pickups (coins on the map), so the
+    // cap is very low: a hacked client can milk at most a few coins a minute.
+    const amount = Math.min(5, Math.max(0, Math.floor(Number(body.amount || 0))));
     const reason = String(body.reason || "generic").slice(0, 40);
     const lastGrant = user.rewardHistory[reason] || 0;
     if (Date.now() - lastGrant < 45 * 1000) {
@@ -463,6 +484,78 @@ async function handle(req, res) {
     db.purchaseLogs = db.purchaseLogs.slice(-500);
     saveDb();
     return send(res, 200, { ok: true, balance: user.balance, gems: user.gems, items: user.inventory });
+  }
+
+  // --- v0.3.1: SERVER-VALIDATED MATCH REWARDS ---------------------------------
+  // The client NEVER sends a coin amount. It opens a match, plays, and reports
+  // win/lose. The server checks: the match exists and belongs to the player,
+  // wasn't finished twice, lasted a humanly-possible time, and the hourly
+  // reward cap isn't exceeded. Then the SERVER picks the reward from its table.
+  if (url.pathname === "/api/match/start" && req.method === "POST") {
+    const body = await parseBody(req);
+    const user = userByToken(body.token);
+    if (!user) return send(res, 401, { ok: false, error: "Invalid session." });
+    if (rateLimited("matchstart:" + user.username, 5000)) {
+      return send(res, 429, { ok: false, error: "Starting matches too fast." });
+    }
+
+    const gameId = MATCH_REWARDS[String(body.gameId || "")] ? String(body.gameId) : "generic";
+    const matchId = token();
+    matches.set(matchId, {
+      user: user.username.toLowerCase(),
+      gameId,
+      startedAt: Date.now(),
+      finished: false,
+    });
+    cleanupMatches();
+    return send(res, 200, { ok: true, matchId });
+  }
+
+  if (url.pathname === "/api/match/finish" && req.method === "POST") {
+    const body = await parseBody(req);
+    const user = userByToken(body.token);
+    if (!user) return send(res, 401, { ok: false, error: "Invalid session." });
+
+    const match = matches.get(String(body.matchId || ""));
+    if (!match || match.user !== user.username.toLowerCase()) {
+      return send(res, 404, { ok: false, error: "Match not found. Rewards need a started match." });
+    }
+    if (match.finished) {
+      return send(res, 409, { ok: false, error: "Match already finished." });
+    }
+
+    const won = String(body.result || "") === "win";
+    const rules = MATCH_REWARDS[match.gameId] || MATCH_REWARDS.generic;
+    const seconds = (Date.now() - match.startedAt) / 1000;
+    const minSeconds = won ? rules.minWinSeconds : rules.minLoseSeconds;
+
+    match.finished = true; // single-use even when rejected below
+
+    if (seconds < minSeconds) {
+      audit(user.username, "reward_rejected", match.gameId,
+        `too fast: ${seconds.toFixed(1)}s < ${minSeconds}s`);
+      return send(res, 400, { ok: false, error: "Match too short - no reward." });
+    }
+
+    // Hourly anti-farm cap per game.
+    const capKey = user.username.toLowerCase() + "|" + match.gameId;
+    const now = Date.now();
+    const stamps = (matchRewardStamps.get(capKey) || []).filter((t) => now - t < 60 * 60 * 1000);
+    if (stamps.length >= 6) {
+      matchRewardStamps.set(capKey, stamps);
+      return send(res, 200, { ok: true, reward: 0, balance: user.balance,
+        message: "Hourly reward limit reached - play another game!" });
+    }
+    stamps.push(now);
+    matchRewardStamps.set(capKey, stamps);
+
+    const reward = won ? rules.win : rules.lose;
+    user.balance += reward;
+    saveDb();
+    return send(res, 200, {
+      ok: true, reward, balance: user.balance,
+      message: `+${reward} BobCoins (server verified)`,
+    });
   }
 
   // --- v0.3: PROMO CODES (server is the only source of truth) ---------------
@@ -711,6 +804,8 @@ async function handle(req, res) {
       createdAt: Date.now(),
       players: new Map(),
       chat: [],
+      voice: [],
+      voiceSeq: 0,
     };
     room.players.set(playerId, {
       id: playerId,
@@ -784,6 +879,52 @@ async function handle(req, res) {
     const room = rooms.get(code);
     if (!room) return send(res, 404, { ok: false, error: "Room not found." });
     return send(res, 200, roomSnapshot(room));
+  }
+
+  // Voice chat: push-to-talk clips (16-bit PCM, base64). Polling friendly so it
+  // works on Render free tier without WebSockets or open ports.
+  if (url.pathname === "/api/realtime/voice" && req.method === "POST") {
+    const body = await parseBody(req);
+    const room = rooms.get(String(body.code || "").trim().toUpperCase());
+    if (!room) return send(res, 404, { ok: false, error: "Room not found." });
+
+    const player = room.players.get(String(body.playerId || ""));
+    if (!player) return send(res, 404, { ok: false, error: "Player not in room." });
+
+    const data = String(body.data || "");
+    // ~6s of 16 kHz 16-bit mono is ~256 KB binary -> ~342 KB base64.
+    if (!data || data.length > 400000) return send(res, 400, { ok: false, error: "Bad voice clip." });
+    if (rateLimited("voice:" + player.id, 700)) return send(res, 200, { ok: true, skipped: true });
+
+    const account = db.users[String(player.name || "").toLowerCase()];
+    if (isMuted(account)) return send(res, 200, { ok: true, skipped: true });
+
+    room.voice = room.voice || [];
+    room.voiceSeq = (room.voiceSeq || 0) + 1;
+    room.voice.push({
+      seq: room.voiceSeq,
+      time: Date.now(),
+      playerId: player.id,
+      sender: player.name,
+      rate: Math.max(8000, Math.min(48000, Number(body.rate || 16000))),
+      data,
+    });
+    room.voice = room.voice.slice(-10);
+    player.lastSeen = Date.now();
+    return send(res, 200, { ok: true, seq: room.voiceSeq });
+  }
+
+  if (url.pathname === "/api/realtime/voice" && req.method === "GET") {
+    const room = rooms.get(String(url.searchParams.get("code") || "").trim().toUpperCase());
+    if (!room) return send(res, 404, { ok: false, error: "Room not found." });
+
+    const after = Number(url.searchParams.get("after") || 0);
+    const exclude = String(url.searchParams.get("exclude") || "");
+    const now = Date.now();
+    const clips = (room.voice || []).filter(
+      (c) => c.seq > after && c.playerId !== exclude && now - c.time < 15000
+    );
+    return send(res, 200, { ok: true, seq: room.voiceSeq || 0, clips });
   }
 
   if (url.pathname === "/api/worlds/publish" && req.method === "POST") {
