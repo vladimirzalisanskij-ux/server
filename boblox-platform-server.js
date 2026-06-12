@@ -316,6 +316,57 @@ function roomSnapshot(room) {
   };
 }
 
+// --- Website: BobGems packages + static files -------------------------------
+// TEST mode (default): purchases grant gems immediately without real money.
+// Set BOBLOX_TEST_PAYMENTS=0 once a real provider (Stripe/YooKassa) is wired in.
+const TEST_PAYMENTS = String(process.env.BOBLOX_TEST_PAYMENTS || "1") !== "0";
+
+const GEM_PACKAGES = {
+  starter: { gems: 100, price: "99 RUB", label: "Starter Pack" },
+  popular: { gems: 550, price: "399 RUB", label: "Popular Pack (+10% bonus)" },
+  mega: { gems: 1200, price: "799 RUB", label: "Mega Pack (+20% bonus)" },
+};
+
+const PUBLIC_DIR = path.join(__dirname, "public");
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".txt": "text/plain; charset=utf-8",
+  ".zip": "application/zip",
+  ".apk": "application/vnd.android.package-archive",
+};
+
+function tryServeStatic(req, res, url) {
+  if (req.method !== "GET") return false;
+
+  let rel;
+  try {
+    rel = decodeURIComponent(url.pathname);
+  } catch {
+    return false;
+  }
+  if (rel === "/") rel = "/index.html";
+  if (rel === "/buy") rel = "/buy.html";
+  if (rel.startsWith("/api/")) return false;
+
+  const file = path.normalize(path.join(PUBLIC_DIR, rel));
+  if (!file.startsWith(PUBLIC_DIR)) return false; // no path traversal
+  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
+
+  const ext = path.extname(file).toLowerCase();
+  res.writeHead(200, {
+    "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
+    "Content-Length": fs.statSync(file).size,
+  });
+  fs.createReadStream(file).pipe(res);
+  return true;
+}
+
 async function handle(req, res) {
   if (req.method === "OPTIONS") {
     return send(res, 200, { ok: true });
@@ -324,16 +375,10 @@ async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   cleanupRooms();
 
-  if (url.pathname === "/" && req.method === "GET") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(`
-      <h1>Boblox Platform Server</h1>
-      <p>Status: online</p>
-      <p>Rooms: ${rooms.size}</p>
-      <p>Published worlds: ${db.worldOrder.length}</p>
-    `);
-    return;
-  }
+  // The official website (served from /public): downloads + BobGems store.
+  // There is intentionally NO playable version on the site - the game is
+  // download-only; the browser only downloads builds and buys gems.
+  if (tryServeStatic(req, res, url)) return;
 
   if (url.pathname === "/api/health" && req.method === "GET") {
     return send(res, 200, {
@@ -781,14 +826,42 @@ async function handle(req, res) {
     return send(res, 200, result);
   }
 
-  if (url.pathname === "/buy" && req.method === "GET") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(`
-      <h1>Boblox BobCoins</h1>
-      <p>This is a test payment page. No real card details are requested.</p>
-      <p>Real payments should be integrated through Stripe, YooKassa, or another provider.</p>
-    `);
-    return;
+  // BobGems checkout from the website. Login is verified server-side; the
+  // gem grant only happens in TEST mode (no provider connected). When a real
+  // provider (Stripe/YooKassa) is added, this is the endpoint to wire it into.
+  if (url.pathname === "/api/payments/checkout" && req.method === "POST") {
+    const body = await parseBody(req);
+    const username = String(body.username || "").trim().toLowerCase();
+    const user = db.users[username];
+    if (!user || !verifyPassword(user, String(body.password || "")))
+      return send(res, 401, { ok: false, error: "Wrong username or password." });
+    if (isBanned(user))
+      return send(res, 403, { ok: false, error: "Account is banned." });
+    if (rateLimited("buy:" + username, 3000))
+      return send(res, 429, { ok: false, error: "Too many attempts, wait a moment." });
+
+    const pack = GEM_PACKAGES[String(body.packageId || "")];
+    if (!pack) return send(res, 400, { ok: false, error: "Unknown package." });
+    if (!TEST_PAYMENTS)
+      return send(res, 503, { ok: false, error: "Payments are not connected yet." });
+
+    user.gems += pack.gems;
+    db.purchaseLogs.push({
+      time: Date.now(),
+      user: user.username,
+      item: "bobgems_" + body.packageId,
+      gems: pack.gems,
+      price: pack.price,
+      mode: "test",
+    });
+    db.purchaseLogs = db.purchaseLogs.slice(-500);
+    audit(user.username, "buy_gems_test", "", `${pack.gems} gems (${pack.price})`);
+    saveDb();
+    return send(res, 200, { ok: true, granted: pack.gems, gems: user.gems, test: true });
+  }
+
+  if (url.pathname === "/api/payments/packages" && req.method === "GET") {
+    return send(res, 200, { ok: true, test: TEST_PAYMENTS, packages: GEM_PACKAGES });
   }
 
   if (url.pathname === "/api/realtime/create-room" && req.method === "POST") {

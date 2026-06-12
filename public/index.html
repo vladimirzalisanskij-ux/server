@@ -1,52 +1,82 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BOBLOX — Download</title>
+  <title>BOBLOX — Скачать игру</title>
   <style>
-    body { font-family: sans-serif; background: #EAF1F8; margin: 0; text-align: center; }
-    header { background: #3F9FE5; color: #fff; padding: 36px 16px; }
-    header h1 { margin: 0; font-size: 44px; letter-spacing: 2px; }
-    .cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; padding: 32px 16px; }
-    .card { background: #fff; border-radius: 14px; padding: 26px; width: 270px;
-            box-shadow: 0 4px 14px rgba(0,0,0,.08); }
-    .card h2 { color: #2C3A47; }
-    a.btn { display: inline-block; background: #5DBB63; color: #fff; text-decoration: none;
-            padding: 13px 26px; border-radius: 10px; font-size: 17px; margin-top: 10px; }
-    a.btn.gray { background: #aab7c4; pointer-events: none; }
-    .note { color: #6D7F90; font-size: 14px; max-width: 640px; margin: 0 auto 40px; }
-    .warn { color: #a55; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(180deg, #EDF2FA 0%, #DCE8F8 100%);
+           margin: 0; text-align: center; min-height: 100vh; color: #1F2A38; }
+    header { background: linear-gradient(135deg, #4C8DFF 0%, #2F62D8 100%); color: #fff; padding: 48px 16px 40px; }
+    header h1 { margin: 0; font-size: 52px; letter-spacing: 4px; text-shadow: 0 3px 10px rgba(0,0,0,.25); }
+    header p { font-size: 18px; opacity: .92; margin: 10px 0 0; }
+    .cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; padding: 36px 16px 8px; }
+    .card { background: #fff; border-radius: 18px; padding: 28px 24px; width: 280px;
+            box-shadow: 0 8px 24px rgba(31,42,56,.10); transition: transform .15s; }
+    .card:hover { transform: translateY(-4px); }
+    .card h2 { color: #1F2A38; margin-top: 0; }
+    .card .emoji { font-size: 44px; }
+    a.btn { display: inline-block; background: #3FC471; color: #fff; text-decoration: none;
+            padding: 14px 28px; border-radius: 12px; font-size: 17px; font-weight: 600; margin-top: 12px;
+            box-shadow: 0 4px 12px rgba(63,196,113,.35); transition: filter .15s; }
+    a.btn:hover { filter: brightness(1.07); }
+    a.btn.gems { background: linear-gradient(135deg, #FFB037, #F2884B); box-shadow: 0 4px 14px rgba(255,176,55,.4); }
+    a.btn.gray { background: #aab7c4; pointer-events: none; box-shadow: none; }
+    .gems-banner { background: #fff; border-radius: 18px; max-width: 620px; margin: 26px auto;
+                   padding: 26px; box-shadow: 0 8px 24px rgba(31,42,56,.10); }
+    .gems-banner h2 { margin-top: 0; color: #F2884B; }
+    .note { color: #74859B; font-size: 14px; max-width: 640px; margin: 0 auto 14px; line-height: 1.6; }
+    .warn { color: #c0564f; font-weight: 600; }
+    .noplay { background: #FFF4E2; border: 1px solid #FFD9A0; color: #8a6420; border-radius: 12px;
+              max-width: 620px; margin: 0 auto 36px; padding: 14px 18px; font-size: 15px; }
+    footer { padding: 18px; color: #9AA8BC; font-size: 13px; }
   </style>
 </head>
 <body>
   <header>
     <h1>BOBLOX</h1>
-    <p>Low poly platform: mini-games, avatar, shop and Boblox Studio</p>
+    <p>Мини-игры, аватар, магазин и Boblox Studio — строй свои миры!</p>
   </header>
 
   <div class="cards">
     <div class="card">
+      <div class="emoji">🖥️</div>
       <h2>Windows</h2>
-      <p>ZIP archive — unzip and run Boblox.exe</p>
-      <a class="btn" href="/downloads/Boblox_Windows.zip">Download for Windows</a>
+      <p>ZIP-архив — распакуй и запусти Boblox.exe</p>
+      <a class="btn" href="/downloads/Boblox_Windows.zip">Скачать для Windows</a>
     </div>
     <div class="card">
+      <div class="emoji">📱</div>
       <h2>Android</h2>
-      <p>APK — open on your phone and install<br>(allow "unknown sources")</p>
-      <a class="btn" href="/downloads/Boblox_Android.apk">Download APK</a>
+      <p>APK — открой на телефоне и установи<br>(разреши «неизвестные источники»)</p>
+      <a class="btn" href="/downloads/Boblox_Android.apk">Скачать APK</a>
     </div>
     <div class="card">
+      <div class="emoji">🍎</div>
       <h2>iPhone / iOS</h2>
-      <p>Not supported yet.</p>
-      <a class="btn gray" href="#">Coming someday</a>
+      <p>Пока не поддерживается.</p>
+      <a class="btn gray" href="#">Когда-нибудь</a>
     </div>
   </div>
 
+  <div class="gems-banner">
+    <h2>💎 BobGems</h2>
+    <p>Премиум-валюта для самых редких предметов.<br>Покупается только здесь, на официальном сайте.</p>
+    <a class="btn gems" href="/buy">Купить BobGems</a>
+  </div>
+
+  <div class="noplay">
+    ⬇️ Играть в Boblox можно только в скачанной игре.<br>
+    В браузере игра недоступна — сайт нужен для загрузки и покупки BobGems.
+  </div>
+
   <p class="note">
-    Create your Boblox Account inside the game to keep BobCoins on the server.<br>
-    <span class="warn">Payments are handled only on this official Boblox website —
-    the game never asks for card details.</span>
+    Создай Boblox-аккаунт внутри игры — BobCoins и BobGems хранятся на сервере.<br>
+    <span class="warn">Покупки проходят только на этом официальном сайте —
+    игра никогда не спрашивает данные карты.</span>
   </p>
+
+  <footer>Boblox Platform · официальный сайт</footer>
 </body>
 </html>

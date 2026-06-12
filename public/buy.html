@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BOBLOX — Купить BobGems</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(180deg, #EDF2FA 0%, #DCE8F8 100%);
+           margin: 0; text-align: center; min-height: 100vh; color: #1F2A38; }
+    header { background: linear-gradient(135deg, #FFB037 0%, #F2884B 100%); color: #fff; padding: 38px 16px 32px; }
+    header h1 { margin: 0; font-size: 40px; letter-spacing: 2px; text-shadow: 0 3px 10px rgba(0,0,0,.2); }
+    header a { color: #fff; font-size: 14px; }
+    .login { background: #fff; border-radius: 16px; max-width: 420px; margin: 28px auto 8px;
+             padding: 22px; box-shadow: 0 8px 24px rgba(31,42,56,.10); }
+    .login h2 { margin-top: 0; font-size: 20px; }
+    .login input { width: 100%; padding: 12px 14px; margin: 6px 0; border: 1px solid #C7D6E9;
+                   border-radius: 10px; font-size: 16px; }
+    .packs { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; padding: 24px 16px; }
+    .pack { background: #fff; border-radius: 18px; padding: 26px 22px; width: 250px;
+            box-shadow: 0 8px 24px rgba(31,42,56,.10); transition: transform .15s; }
+    .pack:hover { transform: translateY(-4px); }
+    .pack .gems { font-size: 36px; font-weight: 700; color: #4C8DFF; }
+    .pack .price { color: #74859B; margin: 8px 0 4px; }
+    .pack .bonus { color: #3FC471; font-size: 14px; min-height: 18px; }
+    button { background: linear-gradient(135deg, #FFB037, #F2884B); color: #fff; border: 0;
+             padding: 13px 30px; border-radius: 12px; font-size: 17px; font-weight: 600;
+             cursor: pointer; margin-top: 12px; box-shadow: 0 4px 14px rgba(255,176,55,.4); }
+    button:hover { filter: brightness(1.07); }
+    button:disabled { background: #aab7c4; box-shadow: none; cursor: default; }
+    #status { max-width: 480px; margin: 4px auto 18px; padding: 0 16px; min-height: 26px;
+              font-size: 16px; font-weight: 600; }
+    #status.ok { color: #2c9a58; }
+    #status.err { color: #c0564f; }
+    .note { color: #74859B; font-size: 14px; max-width: 600px; margin: 0 auto 36px; line-height: 1.6; }
+    .testmode { background: #E8F4FF; border: 1px solid #B9D9FF; color: #2F62D8; border-radius: 12px;
+                max-width: 560px; margin: 14px auto; padding: 12px 16px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>💎 BobGems</h1>
+    <p>Премиум-валюта Boblox</p>
+    <a href="/">← на главную (скачать игру)</a>
+  </header>
+
+  <div class="login">
+    <h2>Твой Boblox-аккаунт</h2>
+    <input id="username" placeholder="Имя пользователя" autocomplete="username">
+    <input id="password" type="password" placeholder="Пароль" autocomplete="current-password">
+  </div>
+
+  <div id="testbox" class="testmode" hidden>
+    🧪 Сейчас включён ТЕСТОВЫЙ режим: гемы начисляются сразу, настоящие деньги не списываются.
+  </div>
+
+  <div class="packs" id="packs"></div>
+  <div id="status"></div>
+
+  <p class="note">
+    Гемы появятся на аккаунте сразу — открой игру (или сверни и разверни её),
+    и баланс обновится.<br>
+    Игра никогда не спрашивает данные карты: покупки проходят только на этом сайте.
+  </p>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const packsEl = document.getElementById('packs');
+
+    function setStatus(message, ok) {
+      statusEl.textContent = message;
+      statusEl.className = ok ? 'ok' : 'err';
+    }
+
+    async function loadPackages() {
+      try {
+        const res = await fetch('/api/payments/packages');
+        const data = await res.json();
+        if (!data.ok) throw new Error();
+        document.getElementById('testbox').hidden = !data.test;
+        for (const [id, pack] of Object.entries(data.packages)) {
+          const bonus = pack.label.includes('+') ? pack.label.slice(pack.label.indexOf('+')).replace(')', '') : '';
+          const card = document.createElement('div');
+          card.className = 'pack';
+          card.innerHTML =
+            '<div class="gems">💎 ' + pack.gems + '</div>' +
+            '<div class="price">' + pack.price + '</div>' +
+            '<div class="bonus">' + bonus + '</div>';
+          const btn = document.createElement('button');
+          btn.textContent = 'Купить';
+          btn.onclick = () => buy(id, btn);
+          card.appendChild(btn);
+          packsEl.appendChild(card);
+        }
+      } catch {
+        setStatus('Не удалось загрузить пакеты. Обнови страницу.', false);
+      }
+    }
+
+    async function buy(packageId, btn) {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      if (!username || !password) {
+        setStatus('Сначала введи имя и пароль своего Boblox-аккаунта.', false);
+        return;
+      }
+      btn.disabled = true;
+      setStatus('Покупаем...', true);
+      try {
+        const res = await fetch('/api/payments/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, packageId })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          setStatus('Готово! +' + data.granted + ' BobGems. Твой баланс: ' + data.gems + ' 💎' +
+            (data.test ? ' (тестовый режим)' : ''), true);
+        } else {
+          setStatus(data.error || 'Покупка не прошла.', false);
+        }
+      } catch {
+        setStatus('Сервер не отвечает. Попробуй ещё раз.', false);
+      }
+      btn.disabled = false;
+    }
+
+    loadPackages();
+  </script>
+</body>
+</html>
