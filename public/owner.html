@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BOBLOX — Панель владельца</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #141A24; margin: 0; color: #E8EEF7; min-height: 100vh; }
+    header { background: linear-gradient(135deg, #2F62D8, #1B3C8F); padding: 18px 24px; display: flex;
+             justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+    header h1 { margin: 0; font-size: 22px; letter-spacing: 2px; }
+    header .who { font-size: 14px; opacity: .9; }
+    main { max-width: 1100px; margin: 0 auto; padding: 18px; }
+    .login-box { max-width: 360px; margin: 60px auto; background: #1D2736; border-radius: 16px; padding: 28px; }
+    .login-box h2 { margin-top: 0; }
+    input, select, textarea, button { font: inherit; border-radius: 9px; border: 1px solid #33415A;
+      background: #121A28; color: #E8EEF7; padding: 9px 12px; }
+    input, select, textarea { width: 100%; margin: 5px 0; }
+    button { background: #3FC471; border: 0; color: #fff; font-weight: 600; cursor: pointer; padding: 9px 14px; margin: 3px 2px; }
+    button:hover { filter: brightness(1.1); }
+    button.warn { background: #E2574C; }
+    button.blue { background: #4C8DFF; }
+    button.gold { background: #D9A23B; }
+    button.gray { background: #41506A; }
+    .section { background: #1D2736; border-radius: 14px; padding: 16px 18px; margin: 14px 0; }
+    .section h2 { margin: 0 0 10px; font-size: 17px; color: #9FC1FF; }
+    .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .row input, .row select { width: auto; flex: 1 1 130px; }
+    #out { background: #0D1320; border: 1px solid #33415A; border-radius: 12px; padding: 12px 14px;
+           min-height: 90px; max-height: 420px; overflow: auto; white-space: pre-wrap;
+           font-family: Consolas, monospace; font-size: 13px; margin-top: 14px; }
+    .hint { color: #7E8EA8; font-size: 12px; margin: 4px 0 0; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .stat { background: #121A28; border-radius: 10px; padding: 10px; text-align: center; }
+    .stat b { display: block; font-size: 20px; color: #6FD68F; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td, th { padding: 5px 8px; border-bottom: 1px solid #2A3650; text-align: left; }
+    #panel { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>👑 BOBLOX OWNER</h1>
+    <div class="who" id="who"></div>
+  </header>
+  <main>
+
+    <div class="login-box" id="loginBox">
+      <h2>Вход для администрации</h2>
+      <input id="lUser" placeholder="Имя пользователя" autocomplete="username">
+      <input id="lPass" type="password" placeholder="Пароль" autocomplete="current-password">
+      <button class="blue" style="width:100%" onclick="doLogin()">Войти</button>
+      <p class="hint" id="loginMsg"></p>
+    </div>
+
+    <div id="panel">
+
+      <div class="section">
+        <h2>📊 Сервер</h2>
+        <div class="row">
+          <button class="blue" onclick="act('serverStats')">1. Статистика сервера</button>
+          <button class="blue" onclick="act('listPlayers')">2. Все игроки</button>
+          <button class="blue" onclick="act('logs')">3. Журнал действий</button>
+          <button class="blue" onclick="act('purchases')">4. Журнал покупок</button>
+          <button class="gray" onclick="out.textContent=''">5. Очистить вывод</button>
+        </div>
+        <div class="stat-grid" id="stats"></div>
+      </div>
+
+      <div class="section">
+        <h2>🔎 Игрок</h2>
+        <div class="row">
+          <input id="pName" placeholder="ник игрока">
+          <button class="blue" onclick="act('findPlayer', {target: v('pName')})">6. Досье</button>
+          <button onclick="act('giveCoins', {target: v('pName'), amount: n('pAmt')})">7. Дать монеты</button>
+          <button class="warn" onclick="act('takeCoins', {target: v('pName'), amount: n('pAmt')})">8. Забрать монеты</button>
+          <button class="gold" onclick="act('giveGems', {target: v('pName'), amount: n('pAmt')})">9. Дать гемы</button>
+          <button class="warn" onclick="act('takeGems', {target: v('pName'), amount: n('pAmt')})">10. Забрать гемы</button>
+          <input id="pAmt" type="number" placeholder="сколько" style="max-width:110px">
+        </div>
+        <div class="row">
+          <button class="gold" onclick="act('setBalance', {target: v('pName'), amount: n('pAmt')})">11. Установить баланс</button>
+          <button class="gold" onclick="act('setGems', {target: v('pName'), amount: n('pAmt')})">12. Установить гемы</button>
+          <input id="pItem" placeholder="id предмета (acc_crown...)">
+          <button onclick="act('giveItem', {target: v('pName'), itemId: v('pItem')})">13. Выдать предмет</button>
+          <button class="warn" onclick="act('removeItem', {target: v('pName'), itemId: v('pItem')})">14. Забрать предмет</button>
+          <button class="warn" onclick="confirm2('Очистить ВЕСЬ инвентарь игрока?') && act('clearInventory', {target: v('pName')})">15. Очистить инвентарь</button>
+        </div>
+        <div class="row">
+          <button class="gold" onclick="act('resetPassword', {target: v('pName')})">16. Сбросить пароль</button>
+          <button class="warn" onclick="confirm2('УДАЛИТЬ аккаунт навсегда?') && act('deleteUser', {target: v('pName')})">17. Удалить аккаунт</button>
+          <select id="pRole"><option value="">без роли</option><option value="moderator">модератор</option><option value="admin">админ</option></select>
+          <button class="gold" onclick="act('setRole', {target: v('pName'), role: v('pRole')})">18. Назначить роль</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>🔨 Модерация</h2>
+        <div class="row">
+          <input id="mName" placeholder="ник нарушителя">
+          <input id="mReason" placeholder="причина">
+        </div>
+        <div class="row">
+          <button class="warn" onclick="act('tempban', {target: v('mName'), amount: 1, reason: v('mReason')})">19. Бан 1 час</button>
+          <button class="warn" onclick="act('tempban', {target: v('mName'), amount: 24, reason: v('mReason')})">20. Бан 24 часа</button>
+          <button class="warn" onclick="act('tempban', {target: v('mName'), amount: 720, reason: v('mReason')})">21. Бан 30 дней</button>
+          <button class="warn" onclick="confirm2('Пермаментный бан?') && act('ban', {target: v('mName'), reason: v('mReason')})">22. Бан навсегда</button>
+          <button onclick="act('unban', {target: v('mName')})">23. Разбанить</button>
+        </div>
+        <div class="row">
+          <button class="warn" onclick="act('mute', {target: v('mName'), amount: 1})">24. Мут 1 час</button>
+          <button class="warn" onclick="act('mute', {target: v('mName'), amount: 24})">25. Мут 24 часа</button>
+          <button onclick="act('unmute', {target: v('mName')})">26. Размутить</button>
+          <button class="blue" onclick="act('listBanned')">27. Список банов</button>
+          <button class="blue" onclick="act('listMuted')">28. Список мутов</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>🚨 Жалобы</h2>
+        <div class="row">
+          <button class="blue" onclick="act('listReports')">29. Открытые жалобы</button>
+          <input id="repId" placeholder="id жалобы">
+          <button onclick="act('resolveReport', {reportId: v('repId')})">30. Закрыть жалобу</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>🌍 Миры</h2>
+        <div class="row">
+          <button class="blue" onclick="act('listWorlds')">31. Все миры</button>
+          <input id="wId" placeholder="id мира" style="max-width:110px">
+          <button class="blue" onclick="act('worldInfo', {worldId: v('wId')})">32. Инфо о мире</button>
+          <button class="gold" onclick="act('featureWorld', {worldId: v('wId')})">33. Рекомендуемый ⭐</button>
+        </div>
+        <div class="row">
+          <input id="wName" placeholder="новое имя мира">
+          <button onclick="act('renameWorld', {worldId: v('wId'), name: v('wName')})">34. Переименовать</button>
+          <button class="warn" onclick="act('resetWorldStats', {worldId: v('wId')})">35. Обнулить статистику</button>
+          <button class="warn" onclick="confirm2('Удалить мир навсегда?') && act('deleteWorld', {worldId: v('wId')})">36. Удалить мир</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>🎮 Живые комнаты</h2>
+        <div class="row">
+          <button class="blue" onclick="act('listRooms')">37. Список комнат</button>
+          <input id="rCode" placeholder="код комнаты" style="max-width:130px">
+          <button class="warn" onclick="act('clearRoomChat', {code: v('rCode')})">38. Очистить чат комнаты</button>
+          <button class="warn" onclick="confirm2('Закрыть комнату? Все игроки вылетят.') && act('closeRoom', {code: v('rCode')})">39. Закрыть комнату</button>
+        </div>
+        <div class="row">
+          <input id="annText" placeholder="текст объявления для всех комнат">
+          <button class="gold" onclick="act('announce', {message: v('annText')})">40. 📢 Объявление всем</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>🎟️ Промокоды</h2>
+        <div class="row">
+          <button class="blue" onclick="act('listPromos')">41. Все промокоды</button>
+          <input id="prCode" placeholder="код">
+          <button onclick="act('promoEnable', {code: v('prCode')})">42. Включить</button>
+          <button class="warn" onclick="act('promoDisable', {code: v('prCode')})">43. Выключить</button>
+          <button class="blue" onclick="act('promoRedeemers', {code: v('prCode')})">44. Кто активировал</button>
+        </div>
+        <div class="row">
+          <select id="prType"><option value="coins">монеты</option><option value="gems">гемы</option><option value="item">предмет</option></select>
+          <input id="prAmt" type="number" placeholder="сколько" style="max-width:100px">
+          <input id="prItem" placeholder="id предмета (если предмет)">
+          <button class="gold" onclick="act('promoCreate', {code: v('prCode'), rewardType: v('prType'), amount: n('prAmt'), itemId: v('prItem')})">45. Создать промокод</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>⭐ Оценки игры</h2>
+        <div class="row">
+          <button class="blue" onclick="act('ratingsList')">46. Все оценки</button>
+          <button class="blue" onclick="loadRating()">47. Средняя оценка</button>
+          <input id="ratUser" placeholder="ник">
+          <button class="warn" onclick="act('deleteRating', {target: v('ratUser')})">48. Удалить оценку</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>🔧 Сессия</h2>
+        <div class="row">
+          <button class="blue" onclick="location.href='/top'">49. Открыть лидерборд</button>
+          <button class="gray" onclick="logout()">50. Выйти из панели</button>
+        </div>
+      </div>
+
+      <div id="out">Готов к работе. Жми кнопки — результат появится здесь.</div>
+    </div>
+  </main>
+
+  <script>
+    let TOKEN = sessionStorage.getItem('boblox_admin_token') || '';
+    let WHO = sessionStorage.getItem('boblox_admin_user') || '';
+    const out = document.getElementById('out');
+    const v = (id) => document.getElementById(id).value.trim();
+    const n = (id) => parseInt(document.getElementById(id).value, 10) || 0;
+    const confirm2 = (msg) => window.confirm(msg);
+
+    function show(loggedIn) {
+      document.getElementById('loginBox').style.display = loggedIn ? 'none' : 'block';
+      document.getElementById('panel').style.display = loggedIn ? 'block' : 'none';
+      document.getElementById('who').textContent = loggedIn ? ('Вы вошли как: ' + WHO) : '';
+    }
+
+    async function doLogin() {
+      const msg = document.getElementById('loginMsg');
+      msg.textContent = 'Входим...';
+      try {
+        const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ username: v('lUser'), password: document.getElementById('lPass').value }) });
+        const data = await res.json();
+        if (!data.ok) { msg.textContent = data.error || 'Не получилось.'; return; }
+        if (!data.role) { msg.textContent = 'Этот аккаунт не админ и не владелец.'; return; }
+        TOKEN = data.token; WHO = data.username + ' (' + data.role + ')';
+        sessionStorage.setItem('boblox_admin_token', TOKEN);
+        sessionStorage.setItem('boblox_admin_user', WHO);
+        show(true);
+        act('serverStats');
+      } catch { msg.textContent = 'Сервер недоступен.'; }
+    }
+
+    function logout() {
+      TOKEN = ''; WHO = '';
+      sessionStorage.removeItem('boblox_admin_token');
+      sessionStorage.removeItem('boblox_admin_user');
+      show(false);
+    }
+
+    function pretty(data) {
+      if (data.stats) {
+        const s = data.stats;
+        document.getElementById('stats').innerHTML =
+          '<div class="stat"><b>' + s.users + '</b>игроков</div>' +
+          '<div class="stat"><b>' + s.playersOnline + '</b>онлайн</div>' +
+          '<div class="stat"><b>' + s.liveRooms + '</b>комнат</div>' +
+          '<div class="stat"><b>' + s.worlds + '</b>миров</div>' +
+          '<div class="stat"><b>' + s.openReports + '</b>жалоб</div>' +
+          '<div class="stat"><b>' + s.banned + '</b>банов</div>' +
+          '<div class="stat"><b>' + s.totalCoins + '</b>монет в игре</div>' +
+          '<div class="stat"><b>' + s.totalGems + '</b>гемов в игре</div>';
+        return 'Статистика обновлена ⬆';
+      }
+      return JSON.stringify(data, null, 2);
+    }
+
+    async function act(action, extra) {
+      out.textContent = '⏳ ' + action + '...';
+      try {
+        const res = await fetch('/api/admin/action', { method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(Object.assign({ token: TOKEN, action }, extra || {})) });
+        const data = await res.json();
+        if (res.status === 401) { out.textContent = 'Сессия истекла — войди заново.'; logout(); return; }
+        out.textContent = (data.ok ? '✅ ' + action + '\n' : '❌ ') + pretty(data);
+      } catch { out.textContent = '❌ Сервер недоступен.'; }
+      return true;
+    }
+
+    async function loadRating() {
+      const res = await fetch('/api/rating');
+      const data = await res.json();
+      out.textContent = '⭐ Средняя оценка игры: ' + data.average + ' из 5 (голосов: ' + data.count + ')';
+    }
+
+    show(!!TOKEN);
+  </script>
+</body>
+</html>

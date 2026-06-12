@@ -65,7 +65,62 @@
     <p>Премиум-валюта для самых редких предметов.<br>Покупается только здесь, на официальном сайте.</p>
     <a class="btn gems" href="/buy">Купить BobGems</a>
     <a class="btn" href="/top" style="background:#4C8DFF; box-shadow:0 4px 12px rgba(76,141,255,.35);">🏆 Топ игроков</a>
+    <a class="btn" href="/report" style="background:#E2574C; box-shadow:0 4px 12px rgba(226,87,76,.35);">🚨 Пожаловаться</a>
   </div>
+
+  <div class="gems-banner" id="ratebox">
+    <h2>⭐ Оценка игры: <span id="avg">—</span></h2>
+    <p id="rcount" style="color:#74859B; margin-top:-6px;"></p>
+    <div id="stars" style="font-size:38px; cursor:pointer; user-select:none;">
+      <span onclick="pick(1)">☆</span><span onclick="pick(2)">☆</span><span onclick="pick(3)">☆</span><span onclick="pick(4)">☆</span><span onclick="pick(5)">☆</span>
+    </div>
+    <div id="rateform" hidden style="max-width:300px; margin:10px auto 0;">
+      <input id="rUser" placeholder="твой ник Boblox" style="width:100%; padding:10px; margin:4px 0; border:1px solid #CBD6E5; border-radius:10px; font:inherit;">
+      <input id="rPass" type="password" placeholder="пароль" style="width:100%; padding:10px; margin:4px 0; border:1px solid #CBD6E5; border-radius:10px; font:inherit;">
+      <button onclick="sendRate()" style="width:100%; padding:11px; border:0; border-radius:10px; background:#FFB037; color:#fff; font-weight:700; font-size:15px; cursor:pointer;">Поставить <span id="pickedTxt"></span></button>
+    </div>
+    <p id="rateStatus" style="font-weight:600; min-height:20px; margin:8px 0 0;"></p>
+  </div>
+
+  <script>
+    let picked = 0;
+    function paint(stars) {
+      const spans = document.querySelectorAll('#stars span');
+      spans.forEach((s, i) => { s.textContent = i < stars ? '⭐' : '☆'; });
+    }
+    function pick(s) {
+      picked = s; paint(s);
+      document.getElementById('rateform').hidden = false;
+      document.getElementById('pickedTxt').textContent = s + ' ⭐';
+    }
+    async function loadRating() {
+      try {
+        const res = await fetch('/api/rating');
+        const data = await res.json();
+        document.getElementById('avg').textContent = data.count ? (data.average + ' / 5') : 'пока нет';
+        document.getElementById('rcount').textContent = data.count ? ('голосов: ' + data.count) : 'Поставь оценку первым!';
+        if (!picked) paint(Math.round(data.average || 0));
+      } catch {}
+    }
+    async function sendRate() {
+      const el = document.getElementById('rateStatus');
+      el.style.color = '#74859B'; el.textContent = 'Отправляем...';
+      try {
+        const res = await fetch('/api/rate', { method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ username: document.getElementById('rUser').value.trim(),
+            password: document.getElementById('rPass').value, stars: picked }) });
+        const data = await res.json();
+        if (data.ok) {
+          el.style.color = '#2E9E5B'; el.textContent = 'Спасибо за оценку! 💙';
+          document.getElementById('rateform').hidden = true;
+          loadRating();
+        } else {
+          el.style.color = '#C0564F'; el.textContent = data.error || 'Не получилось.';
+        }
+      } catch { el.style.color = '#C0564F'; el.textContent = 'Сервер недоступен.'; }
+    }
+    loadRating();
+  </script>
 
   <div class="noplay">
     ⬇️ Играть в Boblox можно только в скачанной игре.<br>

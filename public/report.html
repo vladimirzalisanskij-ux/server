@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BOBLOX — Пожаловаться</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(180deg, #EDF2FA 0%, #DCE8F8 100%);
+           margin: 0; text-align: center; min-height: 100vh; color: #1F2A38; }
+    header { background: linear-gradient(135deg, #E2574C 0%, #B23A30 100%); color: #fff; padding: 32px 16px 26px; }
+    header h1 { margin: 0; font-size: 34px; }
+    header a { color: #FFD9D4; font-size: 14px; }
+    .box { background: #fff; border-radius: 18px; max-width: 460px; margin: 28px auto; padding: 26px;
+           box-shadow: 0 8px 24px rgba(31,42,56,.10); text-align: left; }
+    label { font-size: 13px; color: #74859B; display: block; margin-top: 12px; }
+    input, select, textarea { width: 100%; padding: 11px 12px; margin-top: 4px; border: 1px solid #CBD6E5;
+      border-radius: 10px; font: inherit; }
+    textarea { min-height: 90px; resize: vertical; }
+    button { width: 100%; margin-top: 18px; padding: 13px; border: 0; border-radius: 12px;
+      background: #E2574C; color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+    button:hover { filter: brightness(1.07); }
+    .status { margin-top: 12px; font-weight: 600; min-height: 22px; }
+    .status.ok { color: #2E9E5B; } .status.err { color: #C0564F; }
+    .hint { color: #74859B; font-size: 13px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🚨 Пожаловаться</h1>
+    <p><a href="/">← на главную</a></p>
+  </header>
+
+  <div class="box">
+    <p class="hint">Можно пожаловаться на что угодно: на игрока, на мир, на саму игру, на чат или на баг.
+    Жалобу увидит администрация Boblox.</p>
+
+    <label>На что жалуешься?</label>
+    <select id="type">
+      <option value="player">На игрока</option>
+      <option value="world">На мир</option>
+      <option value="game">На игру</option>
+      <option value="chat">На чат</option>
+      <option value="bug">На баг</option>
+      <option value="other">Другое</option>
+    </select>
+
+    <label>Кто/что именно (ник игрока, название мира...)</label>
+    <input id="target" placeholder="например: badplayer123">
+
+    <label>Опиши проблему</label>
+    <textarea id="reason" placeholder="Что случилось?"></textarea>
+
+    <label>Твой ник Boblox</label>
+    <input id="username" autocomplete="username" placeholder="твой аккаунт">
+
+    <label>Пароль (для подтверждения, что это ты)</label>
+    <input id="password" type="password" autocomplete="current-password">
+
+    <button onclick="sendReport()">Отправить жалобу</button>
+    <div class="status" id="status"></div>
+  </div>
+
+  <script>
+    async function sendReport() {
+      const el = document.getElementById('status');
+      el.className = 'status'; el.textContent = 'Отправляем...';
+      try {
+        const res = await fetch('/api/report', { method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            type: document.getElementById('type').value,
+            target: document.getElementById('target').value.trim(),
+            reason: document.getElementById('reason').value.trim(),
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value,
+          }) });
+        const data = await res.json();
+        el.className = 'status ' + (data.ok ? 'ok' : 'err');
+        el.textContent = data.ok ? 'Жалоба отправлена. Спасибо! 💙' : (data.error || 'Не получилось.');
+        if (data.ok) { document.getElementById('reason').value = ''; document.getElementById('target').value = ''; }
+      } catch {
+        el.className = 'status err'; el.textContent = 'Сервер недоступен.';
+      }
+    }
+  </script>
+</body>
+</html>

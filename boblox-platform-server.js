@@ -35,10 +35,39 @@ const OWNER_ALLOWLIST = String(process.env.BOBLOX_OWNER || "")
 const BLOCKED_WORDS = ["idiot", "stupid", "hate you", "kill yourself", "noob trash"];
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 12; // sessions expire after 12h
 
+// The OWNER account is seeded from a precomputed scrypt hash so it survives
+// database resets (Render free tier wipes the disk on every deploy).
+// The plaintext password is NOT in this file - only its hash.
+const OWNER_SEED = {
+  username: "owner",
+  salt: "90973c51edf3f8baad071668366001698e8e93bf0d01e1fa",
+  passwordHash: "s2$63ff4511a48eb12fc34dd65694a7f2acec862be54c7c83bafe949d79324bf69d",
+};
+
+function seedOwner() {
+  if (!Object.prototype.hasOwnProperty.call(db.users, OWNER_SEED.username)) {
+    db.users[OWNER_SEED.username] = {
+      username: OWNER_SEED.username,
+      salt: OWNER_SEED.salt,
+      passwordHash: OWNER_SEED.passwordHash,
+      token: token(),
+      balance: 0,
+      inventory: [],
+      createdWorlds: [],
+      createdAt: Date.now(),
+    };
+    ensureUserV03(db.users[OWNER_SEED.username]);
+  }
+  db.users[OWNER_SEED.username].adminRole = "owner";
+}
+
 function migrateV03() {
   db.promoCodes = db.promoCodes || {};
   db.auditLogs = db.auditLogs || [];
   db.purchaseLogs = db.purchaseLogs || [];
+  db.reports = db.reports || [];
+  db.ratings = db.ratings || {};
+  seedOwner();
 
   // Seed the two launch codes once (server is the only source of truth).
   if (!db.promoCodes["v0idadph0rn$"]) {
@@ -458,6 +487,8 @@ function tryServeStatic(req, res, url) {
   if (rel === "/") rel = "/index.html";
   if (rel === "/buy") rel = "/buy.html";
   if (rel === "/top" || rel === "/leaderboard") rel = "/leaderboard.html";
+  if (rel === "/owner" || rel === "/admin") rel = "/owner.html";
+  if (rel === "/report") rel = "/report.html";
   if (rel.startsWith("/api/")) return false;
 
   const file = path.normalize(path.join(PUBLIC_DIR, rel));
@@ -783,18 +814,64 @@ async function handle(req, res) {
     return send(res, 200, { ok: true, message: "Daily reward: +10 BobCoins!", balance: user.balance });
   }
 
-  // --- v0.3: PLAYER REPORTS (moderators read them via the audit log) ---------
+  // --- REPORTS on anything: a player, a world, the game itself, chat... ------
+  // Works with a session token (from the game) OR username+password (from the
+  // website). Reports land in db.reports and the owner panel reviews them.
   if (url.pathname === "/api/report" && req.method === "POST") {
     const body = await parseBody(req);
-    const user = userByToken(body.token);
-    if (!user) return send(res, 401, { ok: false, error: "Invalid session." });
+    let user = userByToken(body.token);
+    if (!user && body.username) {
+      const name = String(body.username || "").trim().toLowerCase();
+      const candidate = Object.prototype.hasOwnProperty.call(db.users, name) ? db.users[name] : null;
+      if (candidate && verifyPassword(candidate, String(body.password || "").slice(0, 72)) && !isBanned(candidate))
+        user = candidate;
+    }
+    if (!user) return send(res, 401, { ok: false, error: "Sign in to send a report." });
     if (rateLimited("report:" + user.username, 10000)) {
       return send(res, 429, { ok: false, error: "Please wait before reporting again." });
     }
-    audit(user.username, "player_report",
-      String(body.target || "").slice(0, 24),
-      String(body.reason || "").slice(0, 120));
+
+    const TYPES = ["player", "world", "game", "chat", "bug", "other"];
+    const type = TYPES.includes(String(body.type || "")) ? String(body.type) : "other";
+    const report = {
+      id: token().slice(0, 12),
+      time: Date.now(),
+      reporter: user.username,
+      type,
+      target: String(body.target || "").slice(0, 48),
+      reason: String(body.reason || "").slice(0, 300),
+      resolved: false,
+    };
+    if (!report.reason) return send(res, 400, { ok: false, error: "Describe the problem." });
+    db.reports.push(report);
+    db.reports = db.reports.slice(-1000);
+    audit(user.username, "report_" + type, report.target, report.reason.slice(0, 120));
     return send(res, 200, { ok: true, message: "Report sent. Thank you!" });
+  }
+
+  // --- GAME RATINGS (1-5 stars, one per account, changeable) -----------------
+  if (url.pathname === "/api/rate" && req.method === "POST") {
+    const body = await parseBody(req);
+    if (rateLimited("rate:" + req.socket.remoteAddress, 2000))
+      return send(res, 429, { ok: false, error: "Too fast." });
+    const name = String(body.username || "").trim().toLowerCase();
+    const user = Object.prototype.hasOwnProperty.call(db.users, name) ? db.users[name] : null;
+    if (!user || !verifyPassword(user, String(body.password || "").slice(0, 72)))
+      return send(res, 401, { ok: false, error: "Wrong username or password." });
+    if (isBanned(user)) return send(res, 403, { ok: false, error: "Account is banned." });
+
+    const stars = safeInt(body.stars, 1, 5);
+    db.ratings[name] = { stars, time: Date.now() };
+    saveDb();
+    const all = Object.values(db.ratings).map((r) => r.stars);
+    const average = all.reduce((a, b) => a + b, 0) / all.length;
+    return send(res, 200, { ok: true, average: Math.round(average * 10) / 10, count: all.length, yours: stars });
+  }
+
+  if (url.pathname === "/api/rating" && req.method === "GET") {
+    const all = Object.values(db.ratings || {}).map((r) => r.stars);
+    const average = all.length ? all.reduce((a, b) => a + b, 0) / all.length : 0;
+    return send(res, 200, { ok: true, average: Math.round(average * 10) / 10, count: all.length });
   }
 
   // --- v0.3: ADMIN PANEL (server-side role checks, full audit) ----------------
@@ -821,13 +898,22 @@ async function handle(req, res) {
     const required = {
       listPlayers: "moderator", findPlayer: "moderator",
       mute: "moderator", unmute: "moderator", tempban: "moderator",
+      listBanned: "moderator", listMuted: "moderator",
+      listReports: "moderator", resolveReport: "moderator",
+      listWorlds: "moderator", worldInfo: "moderator",
+      listRooms: "moderator", clearRoomChat: "moderator",
+      serverStats: "moderator", ratingsList: "moderator",
       giveCoins: "admin", takeCoins: "admin",
-      giveItem: "admin", removeItem: "admin",
+      giveItem: "admin", removeItem: "admin", clearInventory: "admin",
       ban: "admin", unban: "admin",
       logs: "admin", purchases: "admin",
-      giveGems: "owner", takeGems: "owner",
-      promoCreate: "owner", promoDisable: "owner", promoRedeemers: "owner",
-      setRole: "owner",
+      deleteWorld: "admin", renameWorld: "admin", resetWorldStats: "admin",
+      closeRoom: "admin", deleteRating: "admin",
+      giveGems: "owner", takeGems: "owner", setBalance: "owner", setGems: "owner",
+      promoCreate: "owner", promoDisable: "owner", promoEnable: "owner",
+      promoRedeemers: "owner", listPromos: "owner",
+      setRole: "owner", resetPassword: "owner", deleteUser: "owner",
+      announce: "owner", featureWorld: "owner",
     };
     if (!required[action]) return send(res, 400, { ok: false, error: "Unknown action." });
     if (!roleAtLeast(actor, required[action])) {
@@ -932,6 +1018,175 @@ async function handle(req, res) {
       }
       case "logs": result.logs = db.auditLogs.slice(-60); break;
       case "purchases": result.logs = db.purchaseLogs.slice(-60); break;
+
+      // --- moderation lists ---
+      case "listBanned":
+        result.players = Object.values(db.users).filter(isBanned).map((u) => ({
+          username: u.username, until: u.bannedUntil, reason: u.banReason || "",
+        }));
+        break;
+      case "listMuted":
+        result.players = Object.values(db.users).filter(isMuted).map((u) => ({
+          username: u.username, until: u.mutedUntil,
+        }));
+        break;
+
+      // --- reports ---
+      case "listReports":
+        result.reports = db.reports.filter((r) => !r.resolved).slice(-100).reverse();
+        break;
+      case "resolveReport": {
+        const report = db.reports.find((r) => r.id === String(body.reportId || ""));
+        if (!report) return send(res, 404, { ok: false, error: "Report not found." });
+        report.resolved = true;
+        report.resolvedBy = actor.username;
+        break;
+      }
+
+      // --- worlds ---
+      case "listWorlds":
+        result.worlds = db.worldOrder.map((id) => db.worlds[id]).filter(Boolean).map((w) => ({
+          id: w.id, name: w.name, creator: w.creator, visits: w.visits || 0,
+          likes: w.likes || 0, featured: !!w.featured,
+        }));
+        break;
+      case "worldInfo": {
+        const world = db.worlds[String(body.worldId || "")];
+        if (!world) return send(res, 404, { ok: false, error: "World not found." });
+        result.world = { id: world.id, name: world.name, creator: world.creator,
+          description: world.description, visits: world.visits, likes: world.likes,
+          featured: !!world.featured, createdAt: world.createdAt,
+          sizeKb: Math.round(JSON.stringify(world.data || {}).length / 1024) };
+        break;
+      }
+      case "deleteWorld": {
+        const worldId = String(body.worldId || "");
+        const world = db.worlds[worldId];
+        if (!world) return send(res, 404, { ok: false, error: "World not found." });
+        delete db.worlds[worldId];
+        db.worldOrder = db.worldOrder.filter((id) => id !== worldId);
+        const creator = db.users[String(world.creator || "").toLowerCase()];
+        if (creator) creator.createdWorlds = (creator.createdWorlds || []).filter((id) => id !== worldId);
+        break;
+      }
+      case "renameWorld": {
+        const world = db.worlds[String(body.worldId || "")];
+        if (!world) return send(res, 404, { ok: false, error: "World not found." });
+        world.name = filterChat(String(body.name || "").slice(0, 64)) || world.name;
+        result.name = world.name;
+        break;
+      }
+      case "resetWorldStats": {
+        const world = db.worlds[String(body.worldId || "")];
+        if (!world) return send(res, 404, { ok: false, error: "World not found." });
+        world.visits = 0; world.likes = 0; world.likedBy = [];
+        break;
+      }
+      case "featureWorld": {
+        const world = db.worlds[String(body.worldId || "")];
+        if (!world) return send(res, 404, { ok: false, error: "World not found." });
+        world.featured = !world.featured;
+        result.featured = world.featured;
+        break;
+      }
+
+      // --- live rooms ---
+      case "listRooms":
+        result.rooms = Array.from(rooms.values()).map((r) => ({
+          code: r.code, gameId: r.gameId, online: r.players.size,
+          createdAt: r.createdAt,
+        }));
+        break;
+      case "closeRoom": {
+        const code = String(body.code || "").trim().toUpperCase();
+        if (!rooms.has(code)) return send(res, 404, { ok: false, error: "Room not found." });
+        rooms.delete(code);
+        break;
+      }
+      case "clearRoomChat": {
+        const room = rooms.get(String(body.code || "").trim().toUpperCase());
+        if (!room) return send(res, 404, { ok: false, error: "Room not found." });
+        room.chat = [{ id: token(), time: Date.now(), sender: "System", message: "Chat cleared by a moderator." }];
+        break;
+      }
+
+      // --- accounts (owner) ---
+      case "setBalance": if (needTarget()) return; target.balance = amount; result.balance = amount; break;
+      case "setGems": if (needTarget()) return; target.gems = amount; result.gems = amount; break;
+      case "clearInventory": if (needTarget()) return; target.inventory = []; break;
+      case "resetPassword": {
+        if (needTarget()) return;
+        if (roleAtLeast(target, actor.adminRole) && target.username !== actor.username)
+          return send(res, 403, { ok: false, error: "Cannot reset same/higher role." });
+        const newPass = makeCode(10);
+        target.salt = token();
+        target.passwordHash = hashPasswordScrypt(newPass, target.salt);
+        target.token = "";
+        result.newPassword = newPass; // shown once to the owner
+        break;
+      }
+      case "deleteUser": {
+        if (needTarget()) return;
+        if (target.adminRole === "owner")
+          return send(res, 403, { ok: false, error: "Cannot delete an owner." });
+        delete db.users[targetName];
+        break;
+      }
+
+      // --- ratings ---
+      case "ratingsList":
+        result.ratings = Object.entries(db.ratings || {}).map(([who, r]) => ({
+          username: who, stars: r.stars, time: r.time,
+        })).sort((a, b) => b.time - a.time).slice(0, 100);
+        break;
+      case "deleteRating": {
+        if (!db.ratings[targetName]) return send(res, 404, { ok: false, error: "No rating from that player." });
+        delete db.ratings[targetName];
+        break;
+      }
+
+      // --- promo extras ---
+      case "promoEnable": {
+        const code = String(body.code || "").trim().toLowerCase();
+        if (!db.promoCodes[code]) return send(res, 404, { ok: false, error: "Code not found." });
+        db.promoCodes[code].enabled = true;
+        break;
+      }
+      case "listPromos":
+        result.promos = Object.entries(db.promoCodes).map(([code, p]) => ({
+          code, label: (p.reward && p.reward.label) || "", enabled: p.enabled,
+          redeemed: (p.redeemedBy || []).length,
+        }));
+        break;
+
+      // --- broadcast announcement into every live room ---
+      case "announce": {
+        const text = filterChat(String(body.message || "").slice(0, 200));
+        if (!text) return send(res, 400, { ok: false, error: "Empty announcement." });
+        for (const room of rooms.values()) {
+          room.chat.push({ id: token(), time: Date.now(), sender: "📢 ANNOUNCEMENT", message: text });
+          room.chat = room.chat.slice(-MAX_CHAT);
+        }
+        result.sentTo = rooms.size;
+        break;
+      }
+
+      // --- server stats ---
+      case "serverStats": {
+        const users = Object.values(db.users);
+        result.stats = {
+          users: users.length,
+          banned: users.filter(isBanned).length,
+          worlds: db.worldOrder.length,
+          liveRooms: rooms.size,
+          playersOnline: Array.from(rooms.values()).reduce((sum, r) => sum + r.players.size, 0),
+          openReports: db.reports.filter((r) => !r.resolved).length,
+          totalCoins: users.reduce((sum, u) => sum + (u.balance || 0), 0),
+          totalGems: users.reduce((sum, u) => sum + (u.gems || 0), 0),
+          uptimeMinutes: Math.floor(process.uptime() / 60),
+        };
+        break;
+      }
     }
 
     audit(actor.username, "admin_" + action, targetName, JSON.stringify({ amount, itemId: body.itemId, code: body.code }).slice(0, 160));
