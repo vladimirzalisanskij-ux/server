@@ -209,6 +209,24 @@ function parseBody(req) {
   });
 }
 
+// All client-supplied numbers go through this: NaN/Infinity become 0 instead
+// of corrupting balances ("amount": "abc" used to set balance to NaN).
+function safeInt(value, min, max) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
+
+function safeNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function cleanName(raw, fallback) {
+  const name = String(raw || "").replace(/[\r\n\t]/g, " ").trim().slice(0, 20);
+  return name || fallback;
+}
+
 function makeCode(length = 6) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -439,10 +457,11 @@ function tryServeStatic(req, res, url) {
   }
   if (rel === "/") rel = "/index.html";
   if (rel === "/buy") rel = "/buy.html";
+  if (rel === "/top" || rel === "/leaderboard") rel = "/leaderboard.html";
   if (rel.startsWith("/api/")) return false;
 
   const file = path.normalize(path.join(PUBLIC_DIR, rel));
-  if (!file.startsWith(PUBLIC_DIR)) return false; // no path traversal
+  if (!file.startsWith(PUBLIC_DIR + path.sep)) return false; // no path traversal
   if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return false;
 
   const ext = path.extname(file).toLowerCase();
@@ -482,10 +501,16 @@ async function handle(req, res) {
     const username = String(body.username || "").trim();
     const password = String(body.password || "");
 
-    if (username.length < 3 || password.length < 4) {
-      return send(res, 400, { ok: false, error: "Username or password too short." });
+    if (rateLimited("register:" + req.socket.remoteAddress, 3000)) {
+      return send(res, 429, { ok: false, error: "Too many attempts. Wait a moment." });
     }
-    if (db.users[username.toLowerCase()]) {
+    if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
+      return send(res, 400, { ok: false, error: "Username: 3-16 letters, digits or _." });
+    }
+    if (password.length < 4 || password.length > 72) {
+      return send(res, 400, { ok: false, error: "Password must be 4-72 characters." });
+    }
+    if (Object.prototype.hasOwnProperty.call(db.users, username.toLowerCase())) {
       return send(res, 409, { ok: false, error: "Username already exists." });
     }
 
@@ -510,11 +535,11 @@ async function handle(req, res) {
   if (url.pathname === "/api/login" && req.method === "POST") {
     const body = await parseBody(req);
     const username = String(body.username || "").trim().toLowerCase();
-    const password = String(body.password || "");
+    const password = String(body.password || "").slice(0, 72);
     if (rateLimited("login:" + req.socket.remoteAddress, 1000)) {
       return send(res, 429, { ok: false, error: "Too many attempts. Wait a second." });
     }
-    const user = db.users[username];
+    const user = Object.prototype.hasOwnProperty.call(db.users, username) ? db.users[username] : null;
 
     if (!user || !verifyPassword(user, password)) {
       return send(res, 401, { ok: false, error: "Invalid username or password." });
@@ -547,7 +572,7 @@ async function handle(req, res) {
     // v0.3.1: match rewards now go through /api/match/finish (validated).
     // This endpoint remains only for tiny pickups (coins on the map), so the
     // cap is very low: a hacked client can milk at most a few coins a minute.
-    const amount = Math.min(5, Math.max(0, Math.floor(Number(body.amount || 0))));
+    const amount = safeInt(body.amount, 0, 5);
     const reason = String(body.reason || "generic").slice(0, 40);
     const lastGrant = user.rewardHistory[reason] || 0;
     if (Date.now() - lastGrant < 45 * 1000) {
@@ -563,7 +588,7 @@ async function handle(req, res) {
   if (url.pathname === "/api/spend" && req.method === "POST") {
     const body = await parseBody(req);
     const user = userByToken(body.token);
-    const amount = Math.max(0, Math.floor(Number(body.amount || 0)));
+    const amount = safeInt(body.amount, 0, 1000000);
     if (!user) return send(res, 401, { ok: false, error: "Invalid session." });
     if (user.balance < amount) return send(res, 400, { ok: false, error: "Not enough BobCoins." });
     user.balance -= amount;
@@ -788,7 +813,7 @@ async function handle(req, res) {
     const targetName = String(body.target || "").trim().toLowerCase();
     const target = targetName ? db.users[targetName] : null;
     if (target) ensureUserV03(target);
-    const amount = Math.max(0, Math.floor(Number(body.amount || 0)));
+    const amount = safeInt(body.amount, 0, 1000000);
     const needTarget = () => !target ? send(res, 404, { ok: false, error: "Player not found." }) : null;
 
     // Role requirements per action (server-side RBAC).
@@ -920,13 +945,16 @@ async function handle(req, res) {
   if (url.pathname === "/api/payments/checkout" && req.method === "POST") {
     const body = await parseBody(req);
     const username = String(body.username || "").trim().toLowerCase();
-    const user = db.users[username];
-    if (!user || !verifyPassword(user, String(body.password || "")))
+    // Rate limit BEFORE the password check, keyed by IP too - otherwise this
+    // endpoint is a free password brute-force oracle.
+    if (rateLimited("buy:" + username, 3000) ||
+        rateLimited("buyip:" + req.socket.remoteAddress, 1500))
+      return send(res, 429, { ok: false, error: "Too many attempts, wait a moment." });
+    const user = Object.prototype.hasOwnProperty.call(db.users, username) ? db.users[username] : null;
+    if (!user || !verifyPassword(user, String(body.password || "").slice(0, 72)))
       return send(res, 401, { ok: false, error: "Wrong username or password." });
     if (isBanned(user))
       return send(res, 403, { ok: false, error: "Account is banned." });
-    if (rateLimited("buy:" + username, 3000))
-      return send(res, 429, { ok: false, error: "Too many attempts, wait a moment." });
 
     const packageId = String(body.packageId || "");
     const pack = GEM_PACKAGES[packageId];
@@ -1017,7 +1045,7 @@ async function handle(req, res) {
     };
     room.players.set(playerId, {
       id: playerId,
-      name: String(body.name || "Host"),
+      name: cleanName(body.name, "Host"),
       x: 0, y: 0, z: 0,
       rx: 0, ry: 0, rz: 0, rw: 1,
       lastSeen: Date.now(),
@@ -1033,8 +1061,10 @@ async function handle(req, res) {
     const room = rooms.get(code);
     if (!room) return send(res, 404, { ok: false, error: "Room not found." });
 
+    if (room.players.size >= 30)
+      return send(res, 403, { ok: false, error: "Room is full." });
     const playerId = token();
-    const name = String(body.name || "Player");
+    const name = cleanName(body.name, "Player");
     room.players.set(playerId, {
       id: playerId,
       name,
@@ -1054,13 +1084,13 @@ async function handle(req, res) {
     const player = room.players.get(String(body.playerId || ""));
     if (!player) return send(res, 404, { ok: false, error: "Player not in room." });
 
-    player.x = Number(body.x || 0);
-    player.y = Number(body.y || 0);
-    player.z = Number(body.z || 0);
-    player.rx = Number(body.rx || 0);
-    player.ry = Number(body.ry || 0);
-    player.rz = Number(body.rz || 0);
-    player.rw = Number(body.rw || 1);
+    player.x = safeNum(body.x);
+    player.y = safeNum(body.y);
+    player.z = safeNum(body.z);
+    player.rx = safeNum(body.rx);
+    player.ry = safeNum(body.ry);
+    player.rz = safeNum(body.rz);
+    player.rw = Number.isFinite(Number(body.rw)) ? Number(body.rw) : 1;
     player.lastSeen = Date.now();
 
     if (body.chat) {
@@ -1139,6 +1169,13 @@ async function handle(req, res) {
     const body = await parseBody(req);
     const user = userByToken(body.token);
     if (!user) return send(res, 401, { ok: false, error: "Invalid session." });
+    if (rateLimited("publish:" + user.username, 15000))
+      return send(res, 429, { ok: false, error: "Publishing too fast. Wait a bit." });
+    if ((user.createdWorlds || []).length >= 50)
+      return send(res, 403, { ok: false, error: "World limit reached (50). Delete some first." });
+    const dataSize = JSON.stringify(body.data || body.dataJson || {}).length;
+    if (dataSize > 300 * 1024)
+      return send(res, 413, { ok: false, error: "World is too big to publish (max 300 KB)." });
 
     const id = String(db.nextWorldId++);
     const world = {
@@ -1151,7 +1188,10 @@ async function handle(req, res) {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       data: body.data || body.dataJson || {},
+      likedBy: [],
     };
+    world.name = filterChat(world.name) || "Untitled World";
+    world.description = filterChat(world.description);
     db.worlds[id] = world;
     db.worldOrder.unshift(id);
     user.createdWorlds = user.createdWorlds || [];
@@ -1175,6 +1215,46 @@ async function handle(req, res) {
         updatedAt: w.updatedAt,
       }));
     return send(res, 200, { ok: true, worlds });
+  }
+
+  // Like a published world - one like per account, toggleable.
+  if (url.pathname === "/api/worlds/like" && req.method === "POST") {
+    const body = await parseBody(req);
+    const user = userByToken(body.token);
+    if (!user) return send(res, 401, { ok: false, error: "Invalid session." });
+    const world = db.worlds[String(body.id || "")];
+    if (!world) return send(res, 404, { ok: false, error: "World not found." });
+    if (rateLimited("like:" + user.username, 1500))
+      return send(res, 429, { ok: false, error: "Too fast." });
+
+    world.likedBy = world.likedBy || [];
+    const who = user.username.toLowerCase();
+    const idx = world.likedBy.indexOf(who);
+    if (idx >= 0) world.likedBy.splice(idx, 1);
+    else world.likedBy.push(who);
+    world.likes = world.likedBy.length;
+    saveDb();
+    return send(res, 200, { ok: true, likes: world.likes, liked: idx < 0 });
+  }
+
+  // Public leaderboard for the game and the website. No auth needed -
+  // only usernames and public stats are exposed.
+  if (url.pathname === "/api/leaderboard" && req.method === "GET") {
+    const players = Object.values(db.users)
+      .filter((u) => !isBanned(u))
+      .map((u) => ({
+        username: u.username,
+        coins: u.balance || 0,
+        gems: u.gems || 0,
+        worlds: (u.createdWorlds || []).length,
+      }));
+    const richest = [...players].sort((a, b) => (b.coins + b.gems * 10) - (a.coins + a.gems * 10)).slice(0, 20);
+    const topWorlds = db.worldOrder
+      .map((id) => db.worlds[id]).filter(Boolean)
+      .map((w) => ({ id: w.id, name: w.name, creator: w.creator, visits: w.visits || 0, likes: w.likes || 0 }))
+      .sort((a, b) => (b.visits + b.likes * 5) - (a.visits + a.likes * 5))
+      .slice(0, 20);
+    return send(res, 200, { ok: true, richest, topWorlds });
   }
 
   if (url.pathname === "/api/worlds/get" && req.method === "GET") {

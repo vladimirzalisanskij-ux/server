@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BOBLOX — Топ игроков</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(180deg, #EDF2FA 0%, #DCE8F8 100%);
+           margin: 0; text-align: center; min-height: 100vh; color: #1F2A38; }
+    header { background: linear-gradient(135deg, #4C8DFF 0%, #2F62D8 100%); color: #fff; padding: 36px 16px 30px; }
+    header h1 { margin: 0; font-size: 40px; letter-spacing: 3px; text-shadow: 0 3px 10px rgba(0,0,0,.25); }
+    header a { color: #DCE8F8; font-size: 14px; }
+    .boards { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; padding: 30px 16px; }
+    .board { background: #fff; border-radius: 18px; padding: 22px; width: 380px; max-width: 94vw;
+             box-shadow: 0 8px 24px rgba(31,42,56,.10); text-align: left; }
+    .board h2 { margin: 0 0 14px; text-align: center; }
+    table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    th { color: #74859B; font-size: 12px; text-transform: uppercase; text-align: left; padding: 6px 8px; }
+    td { padding: 8px; border-top: 1px solid #EDF2FA; }
+    tr.top1 td { background: #FFF7E0; font-weight: 700; }
+    tr.top2 td { background: #F4F7FB; font-weight: 600; }
+    tr.top3 td { background: #FBF1E9; font-weight: 600; }
+    .rank { width: 36px; color: #74859B; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .empty { color: #74859B; padding: 18px; text-align: center; }
+    footer { padding: 18px; color: #9AA8BC; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏆 ТОП BOBLOX</h1>
+    <p><a href="/">← на главную</a></p>
+  </header>
+
+  <div class="boards">
+    <div class="board">
+      <h2>💰 Богатейшие игроки</h2>
+      <table id="richest">
+        <tr><th class="rank">#</th><th>Игрок</th><th class="num">BobCoins</th><th class="num">💎</th></tr>
+      </table>
+      <div class="empty" id="richest-empty" hidden>Пока пусто — стань первым!</div>
+    </div>
+    <div class="board">
+      <h2>🌍 Лучшие миры</h2>
+      <table id="worlds">
+        <tr><th class="rank">#</th><th>Мир</th><th>Автор</th><th class="num">Визиты</th><th class="num">❤️</th></tr>
+      </table>
+      <div class="empty" id="worlds-empty" hidden>Опубликуй мир в Boblox Studio!</div>
+    </div>
+  </div>
+
+  <footer>Обновляется в реальном времени · Boblox Platform</footer>
+
+  <script>
+    function esc(s) {
+      const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML;
+    }
+    function medal(i) { return i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1); }
+
+    async function load() {
+      try {
+        const res = await fetch('/api/leaderboard');
+        const data = await res.json();
+        if (!data.ok) throw new Error();
+
+        const rich = document.getElementById('richest');
+        data.richest.forEach((p, i) => {
+          const tr = document.createElement('tr');
+          if (i < 3) tr.className = 'top' + (i + 1);
+          tr.innerHTML = '<td class="rank">' + medal(i) + '</td><td>' + esc(p.username) +
+            '</td><td class="num">' + p.coins + '</td><td class="num">' + p.gems + '</td>';
+          rich.appendChild(tr);
+        });
+        document.getElementById('richest-empty').hidden = data.richest.length > 0;
+
+        const worlds = document.getElementById('worlds');
+        data.topWorlds.forEach((w, i) => {
+          const tr = document.createElement('tr');
+          if (i < 3) tr.className = 'top' + (i + 1);
+          tr.innerHTML = '<td class="rank">' + medal(i) + '</td><td>' + esc(w.name) +
+            '</td><td>' + esc(w.creator) + '</td><td class="num">' + w.visits +
+            '</td><td class="num">' + w.likes + '</td>';
+          worlds.appendChild(tr);
+        });
+        document.getElementById('worlds-empty').hidden = data.topWorlds.length > 0;
+      } catch {
+        document.getElementById('richest-empty').hidden = false;
+        document.getElementById('worlds-empty').hidden = false;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

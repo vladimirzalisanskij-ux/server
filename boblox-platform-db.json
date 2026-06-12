@@ -1,8 +1,53 @@
 {
-  "users": {},
-  "worlds": {},
-  "worldOrder": [],
-  "nextWorldId": 1,
+  "users": {
+    "testbuyer": {
+      "username": "testbuyer",
+      "salt": "ece0e683af319760ab7a1d1daea14744a1a1f319deade7bf",
+      "passwordHash": "s2$c26da9560a4f78f0f5242c8c0ebf5663cfa729d989ee678bd92e0c6311a90f8e",
+      "token": "972b6ab7c753ff5e1e1e1ef8df55132b2a17b07fafcf3feb",
+      "balance": 100,
+      "inventory": [],
+      "createdWorlds": [
+        "1"
+      ],
+      "createdAt": 1781261529613,
+      "gems": 1850,
+      "redeemedCodes": [],
+      "adminRole": "",
+      "bannedUntil": 0,
+      "banReason": "",
+      "mutedUntil": 0,
+      "lastDailyClaim": 0,
+      "rewardHistory": {},
+      "tokenIssuedAt": 1781279420283
+    }
+  },
+  "worlds": {
+    "1": {
+      "id": "1",
+      "name": "Test World",
+      "description": "",
+      "creator": "testbuyer",
+      "visits": 0,
+      "likes": 1,
+      "createdAt": 1781279420331,
+      "updatedAt": 1781279420331,
+      "data": {
+        "blocks": [
+          1,
+          2,
+          3
+        ]
+      },
+      "likedBy": [
+        "testbuyer"
+      ]
+    }
+  },
+  "worldOrder": [
+    "1"
+  ],
+  "nextWorldId": 2,
   "promoCodes": {
     "v0idadph0rn$": {
       "reward": {
@@ -25,6 +70,58 @@
       "redeemedBy": []
     }
   },
-  "auditLogs": [],
-  "purchaseLogs": []
+  "auditLogs": [
+    {
+      "time": 1781261529686,
+      "actor": "testbuyer",
+      "action": "buy_gems_test",
+      "target": "",
+      "details": "550 gems (399 RUB)"
+    },
+    {
+      "time": 1781265469615,
+      "actor": "testbuyer",
+      "action": "buy_gems_test",
+      "target": "",
+      "details": "100 gems ($1.99)"
+    },
+    {
+      "time": 1781265547770,
+      "actor": "testbuyer",
+      "action": "buy_gems_stripe",
+      "target": "",
+      "details": "1200 gems ($8.99)"
+    }
+  ],
+  "purchaseLogs": [
+    {
+      "time": 1781261529686,
+      "user": "testbuyer",
+      "item": "bobgems_popular",
+      "gems": 550,
+      "price": "399 RUB",
+      "mode": "test"
+    },
+    {
+      "time": 1781265469615,
+      "user": "testbuyer",
+      "item": "bobgems_100",
+      "gems": 100,
+      "price": "$1.99",
+      "mode": "test",
+      "paymentId": ""
+    },
+    {
+      "time": 1781265547770,
+      "user": "testbuyer",
+      "item": "bobgems_1200",
+      "gems": 1200,
+      "price": "$8.99",
+      "mode": "stripe",
+      "paymentId": "cs_test_002"
+    }
+  ],
+  "processedPayments": [
+    "cs_test_002"
+  ]
 }
