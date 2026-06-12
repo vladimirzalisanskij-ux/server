@@ -318,16 +318,18 @@ function roomSnapshot(room) {
 
 // --- Website: BobGems packages + payments ------------------------------------
 // Payment modes (in priority order):
-//   1. STRIPE  - real money. Set on Render: STRIPE_SECRET_KEY=sk_live_... (or
-//      sk_test_...) and STRIPE_WEBHOOK_SECRET=whsec_... The buy page redirects
-//      to Stripe Checkout; the webhook below credits the gems after payment.
-//   2. TEST    - no provider configured: gems are granted for free (default).
-//      Disable with BOBLOX_TEST_PAYMENTS=0 -> store replies "not connected".
+//   1. STRIPE  - real money. Set on Render: STRIPE_SECRET_KEY=sk_live_...
+//      and STRIPE_WEBHOOK_SECRET=whsec_... The buy page redirects to Stripe
+//      Checkout; the webhook below credits the gems after payment.
+//   2. TEST    - local/developer mode only. Enable explicitly with
+//      BOBLOX_TEST_PAYMENTS=1. Gems are granted for free, no real money.
 const https = require("https");
 const STRIPE_KEY = String(process.env.STRIPE_SECRET_KEY || "");
 const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || "");
-const STRIPE_CONFIGURED = STRIPE_KEY.startsWith("sk_");
-const TEST_PAYMENTS = String(process.env.BOBLOX_TEST_PAYMENTS || "1") !== "0";
+const ALLOW_STRIPE_TEST_KEY = String(process.env.BOBLOX_ALLOW_STRIPE_TEST || "0") === "1";
+const STRIPE_CONFIGURED = STRIPE_KEY.startsWith("sk_live_") ||
+  (ALLOW_STRIPE_TEST_KEY && STRIPE_KEY.startsWith("sk_test_"));
+const TEST_PAYMENTS = String(process.env.BOBLOX_TEST_PAYMENTS || "0") === "1";
 const SITE_URL = String(process.env.BOBLOX_SITE_URL || "https://boblox-server.onrender.com").replace(/\/$/, "");
 
 const GEM_PACKAGES = {

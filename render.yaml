@@ -13,3 +13,15 @@ services:
       # NEVER commit secrets to git.
       - key: BOBLOX_OWNER
         sync: false
+      # Public URL of this Render service, for Stripe success/cancel redirects.
+      - key: BOBLOX_SITE_URL
+        value: https://boblox-server.onrender.com
+      # Production payments: use a live Stripe secret key. Do not commit it.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      # Stripe webhook signing secret for /api/payments/stripe-webhook.
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # Keep free/test purchases disabled on production.
+      - key: BOBLOX_TEST_PAYMENTS
+        value: "0"

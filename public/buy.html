@@ -83,6 +83,10 @@
         if (!data.ok) throw new Error();
         document.getElementById('testbox').hidden = data.mode !== 'test';
         document.getElementById('stripebox').hidden = data.mode !== 'stripe';
+        const paymentsOff = data.mode === 'off';
+        if (paymentsOff) {
+          setStatus('Настоящая оплата еще не подключена. Добавь Stripe live keys в Render.', false);
+        }
         for (const [id, pack] of Object.entries(data.packages)) {
           const bonus = pack.label.includes('+') ? pack.label.slice(pack.label.indexOf('+')).replace(')', '') : '';
           const card = document.createElement('div');
@@ -93,6 +97,7 @@
             '<div class="bonus">' + bonus + '</div>';
           const btn = document.createElement('button');
           btn.textContent = 'Купить';
+          btn.disabled = paymentsOff;
           btn.onclick = () => buy(id, btn);
           card.appendChild(btn);
           packsEl.appendChild(card);
