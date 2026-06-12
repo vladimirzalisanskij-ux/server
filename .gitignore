@@ -5,6 +5,5 @@ backups/
 *.log
 node_modules/
 
-# Game builds are uploaded via the dashboard, not git (too big).
-public/downloads/*.zip
-public/downloads/*.apk
+# Game builds ARE committed: Render serves them from /downloads.
+# (Each file must stay under GitHub's 100 MB limit.)
