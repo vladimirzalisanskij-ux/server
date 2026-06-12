@@ -163,8 +163,6 @@ function cleanupMatches() {
   }
 }
 
-migrateV03();
-
 function loadDb() {
   try {
     if (fs.existsSync(DB_PATH)) {
@@ -185,6 +183,95 @@ function loadDb() {
 function saveDb() {
   fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
   backupDb();
+  scheduleGistSave();
+}
+
+// --- Persistent storage in a secret GitHub Gist ------------------------------
+// Render's free tier wipes the local disk on every deploy/restart, so the DB
+// is mirrored to a secret gist: loaded at startup, saved (debounced) on change.
+// Configure on Render: BOBLOX_GIST_ID + BOBLOX_GIST_TOKEN (gist-scope token).
+const GIST_ID = String(process.env.BOBLOX_GIST_ID || "");
+const GIST_TOKEN = String(process.env.BOBLOX_GIST_TOKEN || "");
+const GIST_ENABLED = !!(GIST_ID && GIST_TOKEN);
+const GIST_FILE = "boblox-db.json";
+let gistSaveTimer = null;
+let gistSaving = false;
+
+function githubRequest(method, apiPath, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const req = require("https").request({
+      hostname: "api.github.com",
+      path: apiPath,
+      method,
+      headers: Object.assign({
+        Authorization: "token " + GIST_TOKEN,
+        "User-Agent": "boblox-server",
+        Accept: "application/vnd.github+json",
+      }, payload ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) } : {}),
+    }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        if (res.statusCode >= 400) return reject(new Error("GitHub " + res.statusCode));
+        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+      });
+    });
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+function fetchRaw(rawUrl) {
+  return new Promise((resolve, reject) => {
+    require("https").get(rawUrl, { headers: { "User-Agent": "boblox-server" } }, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => resolve(data));
+    }).on("error", reject);
+  });
+}
+
+async function loadDbFromGist() {
+  if (!GIST_ENABLED) return false;
+  try {
+    const gist = await githubRequest("GET", "/gists/" + GIST_ID);
+    const file = gist && gist.files && gist.files[GIST_FILE];
+    if (!file) return false;
+    const content = file.truncated ? await fetchRaw(file.raw_url) : file.content;
+    const parsed = JSON.parse(content);
+    if (!parsed || typeof parsed !== "object" || !parsed.users) {
+      console.log("[Boblox] Gist DB is empty - starting fresh and seeding it.");
+      return false;
+    }
+    db = parsed;
+    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+    console.log(`[Boblox] Database restored from gist (${Object.keys(db.users).length} users).`);
+    return true;
+  } catch (err) {
+    console.warn("[Boblox] Could not load DB from gist:", err.message);
+    return false; // fall back to the local file - never crash the server
+  }
+}
+
+function scheduleGistSave() {
+  if (!GIST_ENABLED || gistSaveTimer) return;
+  gistSaveTimer = setTimeout(pushDbToGist, 20 * 1000); // batch rapid changes
+}
+
+async function pushDbToGist() {
+  gistSaveTimer = null;
+  if (!GIST_ENABLED || gistSaving) return;
+  gistSaving = true;
+  try {
+    await githubRequest("PATCH", "/gists/" + GIST_ID, {
+      files: { [GIST_FILE]: { content: JSON.stringify(db) } },
+    });
+  } catch (err) {
+    console.warn("[Boblox] Gist save failed (will retry on next change):", err.message);
+  }
+  gistSaving = false;
 }
 
 // Automatic DB backups: at most every 6 hours, keep the last 10 files.
@@ -1557,11 +1644,26 @@ function gemPrice(itemId) {
   return GEM_CATALOG[itemId] !== undefined ? GEM_CATALOG[itemId] : -1;
 }
 
-http.createServer((req, res) => {
-  handle(req, res).catch((err) => {
-    console.error(err);
-    send(res, 500, { ok: false, error: "Server error." });
+async function start() {
+  await loadDbFromGist(); // restore players after a Render deploy/restart
+  migrateV03();
+
+  http.createServer((req, res) => {
+    handle(req, res).catch((err) => {
+      console.error(err);
+      send(res, 500, { ok: false, error: "Server error." });
+    });
+  }).listen(PORT, "0.0.0.0", () => {
+    console.log(`[Boblox] Platform server running on http://0.0.0.0:${PORT}` +
+      (GIST_ENABLED ? " (gist persistence ON)" : " (gist persistence OFF - data is ephemeral)"));
   });
-}).listen(PORT, "0.0.0.0", () => {
-  console.log(`[Boblox] Platform server running on http://0.0.0.0:${PORT}`);
+}
+
+// Render sends SIGTERM before shutting the service down - flush the DB first.
+process.on("SIGTERM", () => {
+  Promise.resolve(GIST_ENABLED ? pushDbToGist() : null)
+    .finally(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000); // never hang the shutdown
 });
+
+start();
