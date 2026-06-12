@@ -447,7 +447,7 @@ const MIME_TYPES = {
 };
 
 function tryServeStatic(req, res, url) {
-  if (req.method !== "GET") return false;
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
 
   let rel;
   try {
@@ -469,7 +469,8 @@ function tryServeStatic(req, res, url) {
     "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
     "Content-Length": fs.statSync(file).size,
   });
-  fs.createReadStream(file).pipe(res);
+  if (req.method === "HEAD") res.end();
+  else fs.createReadStream(file).pipe(res);
   return true;
 }
 
