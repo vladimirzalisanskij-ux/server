@@ -316,16 +316,101 @@ function roomSnapshot(room) {
   };
 }
 
-// --- Website: BobGems packages + static files -------------------------------
-// TEST mode (default): purchases grant gems immediately without real money.
-// Set BOBLOX_TEST_PAYMENTS=0 once a real provider (Stripe/YooKassa) is wired in.
+// --- Website: BobGems packages + payments ------------------------------------
+// Payment modes (in priority order):
+//   1. STRIPE  - real money. Set on Render: STRIPE_SECRET_KEY=sk_live_... (or
+//      sk_test_...) and STRIPE_WEBHOOK_SECRET=whsec_... The buy page redirects
+//      to Stripe Checkout; the webhook below credits the gems after payment.
+//   2. TEST    - no provider configured: gems are granted for free (default).
+//      Disable with BOBLOX_TEST_PAYMENTS=0 -> store replies "not connected".
+const https = require("https");
+const STRIPE_KEY = String(process.env.STRIPE_SECRET_KEY || "");
+const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || "");
+const STRIPE_CONFIGURED = STRIPE_KEY.startsWith("sk_");
 const TEST_PAYMENTS = String(process.env.BOBLOX_TEST_PAYMENTS || "1") !== "0";
+const SITE_URL = String(process.env.BOBLOX_SITE_URL || "https://boblox-server.onrender.com").replace(/\/$/, "");
 
 const GEM_PACKAGES = {
-  starter: { gems: 100, price: "99 RUB", label: "Starter Pack" },
-  popular: { gems: 550, price: "399 RUB", label: "Popular Pack (+10% bonus)" },
-  mega: { gems: 1200, price: "799 RUB", label: "Mega Pack (+20% bonus)" },
+  starter: { gems: 100, cents: 199, price: "$1.99", label: "Starter Pack" },
+  popular: { gems: 550, cents: 499, price: "$4.99", label: "Popular Pack (+10% bonus)" },
+  mega: { gems: 1200, cents: 899, price: "$8.99", label: "Mega Pack (+20% bonus)" },
 };
+
+function paymentsMode() {
+  if (STRIPE_CONFIGURED) return "stripe";
+  return TEST_PAYMENTS ? "test" : "off";
+}
+
+function stripeRequest(apiPath, params) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams(params).toString();
+    const req = https.request({
+      hostname: "api.stripe.com",
+      path: apiPath,
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + STRIPE_KEY,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try { resolve(JSON.parse(data)); } catch { reject(new Error("Bad Stripe response")); }
+      });
+    });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function readRawBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on("data", (c) => { chunks.push(c); if (chunks.length > 2048) req.destroy(); });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+// Stripe signs webhooks: Stripe-Signature: t=<unix>,v1=<hmac>. We recompute the
+// HMAC over "<t>.<raw body>" and compare - a forged request cannot grant gems.
+function verifyStripeSignature(rawBody, header) {
+  if (!header || !STRIPE_WEBHOOK_SECRET) return false;
+  let t = "";
+  const v1s = [];
+  for (const part of String(header).split(",")) {
+    const [key, value] = part.split("=");
+    if (key === "t") t = value;
+    if (key === "v1") v1s.push(value);
+  }
+  if (!t || v1s.length === 0) return false;
+  if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false; // 5 min tolerance
+
+  const expected = crypto.createHmac("sha256", STRIPE_WEBHOOK_SECRET)
+    .update(`${t}.${rawBody}`).digest("hex");
+  return v1s.some((v1) => {
+    try { return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1)); }
+    catch { return false; }
+  });
+}
+
+function grantGems(user, pack, mode, paymentId) {
+  user.gems += pack.gems;
+  db.purchaseLogs.push({
+    time: Date.now(),
+    user: user.username,
+    item: "bobgems_" + pack.gems,
+    gems: pack.gems,
+    price: pack.price,
+    mode,
+    paymentId: paymentId || "",
+  });
+  db.purchaseLogs = db.purchaseLogs.slice(-500);
+  audit(user.username, "buy_gems_" + mode, "", `${pack.gems} gems (${pack.price})`);
+  saveDb();
+}
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const MIME_TYPES = {
@@ -826,9 +911,10 @@ async function handle(req, res) {
     return send(res, 200, result);
   }
 
-  // BobGems checkout from the website. Login is verified server-side; the
-  // gem grant only happens in TEST mode (no provider connected). When a real
-  // provider (Stripe/YooKassa) is added, this is the endpoint to wire it into.
+  // BobGems checkout from the website. Login is verified server-side.
+  // STRIPE mode: replies with a redirect to Stripe Checkout (card entered on
+  // Stripe's page, never on ours); gems are credited by the webhook below.
+  // TEST mode: gems are granted immediately, no real money.
   if (url.pathname === "/api/payments/checkout" && req.method === "POST") {
     const body = await parseBody(req);
     const username = String(body.username || "").trim().toLowerCase();
@@ -840,28 +926,75 @@ async function handle(req, res) {
     if (rateLimited("buy:" + username, 3000))
       return send(res, 429, { ok: false, error: "Too many attempts, wait a moment." });
 
-    const pack = GEM_PACKAGES[String(body.packageId || "")];
+    const packageId = String(body.packageId || "");
+    const pack = GEM_PACKAGES[packageId];
     if (!pack) return send(res, 400, { ok: false, error: "Unknown package." });
+
+    if (STRIPE_CONFIGURED) {
+      try {
+        const session = await stripeRequest("/v1/checkout/sessions", {
+          mode: "payment",
+          success_url: SITE_URL + "/buy?paid=1",
+          cancel_url: SITE_URL + "/buy?canceled=1",
+          "line_items[0][quantity]": "1",
+          "line_items[0][price_data][currency]": "usd",
+          "line_items[0][price_data][unit_amount]": String(pack.cents),
+          "line_items[0][price_data][product_data][name]": `${pack.gems} BobGems (${pack.label})`,
+          "metadata[username]": user.username.toLowerCase(),
+          "metadata[packageId]": packageId,
+        });
+        if (!session || !session.url)
+          return send(res, 502, { ok: false, error: "Stripe rejected the request." });
+        return send(res, 200, { ok: true, redirect: session.url });
+      } catch {
+        return send(res, 502, { ok: false, error: "Could not reach Stripe, try later." });
+      }
+    }
+
     if (!TEST_PAYMENTS)
       return send(res, 503, { ok: false, error: "Payments are not connected yet." });
 
-    user.gems += pack.gems;
-    db.purchaseLogs.push({
-      time: Date.now(),
-      user: user.username,
-      item: "bobgems_" + body.packageId,
-      gems: pack.gems,
-      price: pack.price,
-      mode: "test",
-    });
-    db.purchaseLogs = db.purchaseLogs.slice(-500);
-    audit(user.username, "buy_gems_test", "", `${pack.gems} gems (${pack.price})`);
-    saveDb();
+    grantGems(user, pack, "test", "");
     return send(res, 200, { ok: true, granted: pack.gems, gems: user.gems, test: true });
   }
 
+  // Stripe calls this after a successful payment. Signature-verified.
+  // Configure in the Stripe dashboard: endpoint <site>/api/payments/stripe-webhook,
+  // event "checkout.session.completed".
+  if (url.pathname === "/api/payments/stripe-webhook" && req.method === "POST") {
+    const raw = await readRawBody(req);
+    if (!verifyStripeSignature(raw, req.headers["stripe-signature"]))
+      return send(res, 400, { ok: false, error: "Bad signature." });
+
+    let event;
+    try { event = JSON.parse(raw.toString("utf8")); }
+    catch { return send(res, 400, { ok: false, error: "Bad payload." }); }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data && event.data.object;
+      db.processedPayments = db.processedPayments || [];
+      if (session && session.payment_status === "paid" &&
+          !db.processedPayments.includes(session.id)) {
+        const meta = session.metadata || {};
+        const user = db.users[String(meta.username || "")];
+        const pack = GEM_PACKAGES[String(meta.packageId || "")];
+        if (user && pack) {
+          db.processedPayments.push(session.id);
+          db.processedPayments = db.processedPayments.slice(-2000);
+          grantGems(user, pack, "stripe", session.id);
+        }
+      }
+    }
+    return send(res, 200, { ok: true });
+  }
+
   if (url.pathname === "/api/payments/packages" && req.method === "GET") {
-    return send(res, 200, { ok: true, test: TEST_PAYMENTS, packages: GEM_PACKAGES });
+    return send(res, 200, {
+      ok: true,
+      mode: paymentsMode(),
+      test: paymentsMode() === "test",
+      packages: GEM_PACKAGES,
+    });
   }
 
   if (url.pathname === "/api/realtime/create-room" && req.method === "POST") {

@@ -53,6 +53,10 @@
   <div id="testbox" class="testmode" hidden>
     🧪 Сейчас включён ТЕСТОВЫЙ режим: гемы начисляются сразу, настоящие деньги не списываются.
   </div>
+  <div id="stripebox" class="testmode" hidden>
+    🔒 Оплата через <b>Stripe</b>: карта вводится на защищённой странице Stripe,
+    наш сайт её не видит. После оплаты гемы придут в течение минуты.
+  </div>
 
   <div class="packs" id="packs"></div>
   <div id="status"></div>
@@ -77,7 +81,8 @@
         const res = await fetch('/api/payments/packages');
         const data = await res.json();
         if (!data.ok) throw new Error();
-        document.getElementById('testbox').hidden = !data.test;
+        document.getElementById('testbox').hidden = data.mode !== 'test';
+        document.getElementById('stripebox').hidden = data.mode !== 'stripe';
         for (const [id, pack] of Object.entries(data.packages)) {
           const bonus = pack.label.includes('+') ? pack.label.slice(pack.label.indexOf('+')).replace(')', '') : '';
           const card = document.createElement('div');
@@ -113,6 +118,11 @@
           body: JSON.stringify({ username, password, packageId })
         });
         const data = await res.json();
+        if (data.ok && data.redirect) {
+          setStatus('Перенаправляем на безопасную оплату Stripe...', true);
+          window.location.href = data.redirect;
+          return;
+        }
         if (data.ok) {
           setStatus('Готово! +' + data.granted + ' BobGems. Твой баланс: ' + data.gems + ' 💎' +
             (data.test ? ' (тестовый режим)' : ''), true);
@@ -126,6 +136,14 @@
     }
 
     loadPackages();
+
+    // Coming back from Stripe Checkout.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('paid') === '1') {
+      setStatus('Оплата прошла! 💎 Гемы придут на аккаунт в течение минуты — открой игру.', true);
+    } else if (params.get('canceled') === '1') {
+      setStatus('Оплата отменена. Ничего не списано.', false);
+    }
   </script>
 </body>
 </html>
